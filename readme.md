@@ -4,7 +4,7 @@
 
 ---
 
-[English](#README.md) | [中文](#readme.md)
+[English](#README.md) | [中文](#中文)
 
 ## ✨ 功能特性
 
