@@ -208,7 +208,7 @@ Issues and pull requests are welcome. Please keep the code style consistent and 
 
 ---
 
-#中文
+# 中文
 
 # RSS Aggregator
 
