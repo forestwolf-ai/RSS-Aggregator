@@ -3,7 +3,7 @@
 A feature-rich, self-hosted RSS feed aggregator. Supports scheduled fetching, OPML import/export, full-text extraction, keyword search and filtering, email notifications, and a bilingual web interface (English / Chinese). Ideal for personal or team use in information aggregation, content monitoring, and reading management.
 
 ---
-[English](#RSSAggregator) | [中文](#RSSAggregator(中文))
+[English](#RSSAggregator) | [中文](#中文)
 
 ## ✨ Features
 
@@ -208,7 +208,7 @@ Issues and pull requests are welcome. Please keep the code style consistent and 
 
 ---
 
-# RSS Aggregator （中文）
+# 中文 RSS Aggregator
 
 一个功能丰富、可自托管的 RSS 订阅聚合器。支持定时抓取、OPML 导入导出、全文提取、关键词搜索过滤、邮件通知，并提供中英文双语 Web 界面。适合个人或团队用于信息聚合、内容监控和阅读管理。
 
