@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="{{ lang }}">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ _('app_name') }}</title>
+</head>
+<body>
+    <h1>{{ _('app_name') }}</h1>
+    <a href="?lang=en">English</a> | <a href="?lang=zh">中文</a>
+
+    {% with messages = get_flashed_messages() %}
+      {% if messages %}
+        <ul>
+          {% for message in messages %}
+            <li>{{ message }}</li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    {% endwith %}
+
+    <hr>
+
+    <!-- 搜索表单 -->
+    <form action="{{ url_for('web.search') }}" method="get">
+        <input type="text" name="q" placeholder="Search..." value="{{ request.args.get('q', '') }}">
+        <select name="source_id">
+            <option value="">All Sources</option>
+            {% for s in sources %}
+            <option value="{{ s.id }}" {% if request.args.get('source_id')|int == s.id %}selected{% endif %}>{{ s.name }}</option>
+            {% endfor %}
+        </select>
+        <label><input type="checkbox" name="unread" value="true" {% if request.args.get('unread') == 'true' %}checked{% endif %}> Unread only</label>
+        <button type="submit">Search</button>
+    </form>
+
+    <!-- 添加源表单 -->
+    <form action="{{ url_for('web.add_source') }}" method="post">
+        <input type="text" name="name" placeholder="Name">
+        <input type="url" name="url" placeholder="RSS URL" required>
+        <input type="text" name="category" placeholder="Category">
+        <input type="number" name="interval" value="30" min="5">
+        <button type="submit">{{ _('add_source') }}</button>
+    </form>
+
+    <!-- OPML 导入导出 -->
+    <div>
+        <a href="{{ url_for('web.export_opml_route') }}">Export OPML</a>
+        <form action="{{ url_for('web.import_opml_route') }}" method="post" enctype="multipart/form-data" style="display:inline">
+            <input type="file" name="opml_file" accept=".opml,.xml">
+            <button type="submit">Import OPML</button>
+        </form>
+    </div>
+
+    <h2>{{ _('sources') }}</h2>
+    <ul>
+    {% for source in sources %}
+        <li>
+            <strong>{{ source.name }}</strong> ({{ source.category }}) - {{ source.url }}
+            <a href="{{ url_for('web.refresh_source', source_id=source.id) }}">{{ _('refresh') }}</a>
+            <a href="{{ url_for('web.delete_source', source_id=source.id) }}" onclick="return confirm('Delete?')">{{ _('delete_source') }}</a>
+        </li>
+    {% endfor %}
+    </ul>
+
+    <h2>{{ _('articles') }}</h2>
+    {% for article in articles %}
+        <div>
+            <h3><a href="{{ article.link }}" target="_blank">{{ article.title }}</a></h3>
+            <p>{{ article.summary|truncate(200) }}</p>
+            <small>{{ article.published }}</small>
+        </div>
+    {% endfor %}
+</body>
+</html>

@@ -1,0 +1,26 @@
+app:
+  name: "RSS Aggregator"
+  language: "en"           # en / zh
+  timezone: "Asia/Shanghai"
+
+database:
+  url: "sqlite:///rss.db"
+
+scheduler:
+  enabled: true
+  default_interval: 30     # minutes
+
+server:
+  host: "0.0.0.0"
+  port: 5000
+  debug: false
+
+notifications:
+  email:
+    enabled: false
+    smtp_server: "smtp.example.com"
+    smtp_port: 587
+    username: "user@example.com"
+    password: "password"
+    from_addr: "user@example.com"
+    to_addr: "user@example.com"
