@@ -13,6 +13,12 @@ TRANSLATIONS = {
         "language": "Language",
         "interval": "Update Interval (minutes)",
         "save": "Save",
+        "search": "Search",
+        "export_opml": "Export OPML",
+        "import_opml": "Import OPML",
+        "previous": "Previous",
+        "next": "Next",
+        "page": "Page",
     },
     "zh": {
         "app_name": "RSS聚合器",
@@ -28,6 +34,12 @@ TRANSLATIONS = {
         "language": "语言",
         "interval": "更新间隔（分钟）",
         "save": "保存",
+        "search": "搜索",
+        "export_opml": "导出OPML",
+        "import_opml": "导入OPML",
+        "previous": "上一页",
+        "next": "下一页",
+        "page": "页",
     }
 }
 
