@@ -1,19 +1,24 @@
-from flask import Blueprint, render_template, request, redirect, url_for, flash
+from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app
 from app import db
 from app.models import Source, Article
 from app.fetcher import fetch_source
 from app.i18n import translate
-from flask import current_app, flash
 from app.search import search_articles
+from app.opml import export_opml, import_opml
 
 web_bp = Blueprint('web', __name__)
 
 @web_bp.route('/')
 def index():
-    lang = request.args.get('lang', 'en')
+    lang = request.args.get('lang', current_app.config.get('APP_LANGUAGE', 'en'))
+    page = request.args.get('page', 1, type=int)
     sources = Source.query.all()
-    articles = Article.query.order_by(Article.published.desc()).limit(100).all()
-    return render_template('index.html', sources=sources, articles=articles, lang=lang, _=lambda k: translate(k, lang))
+    articles = Article.query.order_by(Article.published.desc()).paginate(page=page, per_page=50, error_out=False)
+    return render_template('index.html',
+                           sources=sources,
+                           articles=articles,
+                           lang=lang,
+                           _=lambda k: translate(k, lang))
 
 @web_bp.route('/add_source', methods=['POST'])
 def add_source():
@@ -25,7 +30,9 @@ def add_source():
         source = Source(name=name, url=url, category=category, interval=interval)
         db.session.add(source)
         db.session.commit()
-        fetch_source(source.id)
+        # 立即抓取并允许通知
+        fetch_source(source.id, notify=True)
+        flash('Source added and fetched.')
     return redirect(url_for('web.index'))
 
 @web_bp.route('/delete_source/<int:source_id>')
@@ -37,22 +44,29 @@ def delete_source(source_id):
 
 @web_bp.route('/refresh_source/<int:source_id>')
 def refresh_source(source_id):
-    fetch_source(source_id)
+    fetch_source(source_id, notify=True)
     return redirect(url_for('web.index'))
 
 @web_bp.route('/search')
 def search():
-    lang = request.args.get('lang', 'en')
+    lang = request.args.get('lang', current_app.config.get('APP_LANGUAGE', 'en'))
     query = request.args.get('q', '')
     source_id = request.args.get('source_id', type=int)
     unread = request.args.get('unread', 'false').lower() == 'true'
-    articles = search_articles(query, source_id, unread)
+    page = request.args.get('page', 1, type=int)
+    pagination = search_articles(query, source_id, unread, page=page, per_page=50)
     sources = Source.query.all()
-    return render_template('index.html', sources=sources, articles=articles, lang=lang, _=lambda k: translate(k, lang))
+    return render_template('index.html',
+                           sources=sources,
+                           articles=pagination,
+                           lang=lang,
+                           _=lambda k: translate(k, lang),
+                           search_query=query,
+                           search_source_id=source_id,
+                           search_unread=unread)
 
 @web_bp.route('/export_opml')
 def export_opml_route():
-    from app.opml import export_opml
     opml_content = export_opml()
     return current_app.response_class(
         opml_content,
@@ -62,9 +76,8 @@ def export_opml_route():
 
 @web_bp.route('/import_opml', methods=['POST'])
 def import_opml_route():
-    from app.opml import import_opml
-    file = request.files['opml_file']
+    file = request.files.get('opml_file')
     if file:
-        success, failed = import_opml(file.read().decode('utf-8'))
+        success, failed = import_opml(file.read().decode('utf-8', errors='ignore'))
         flash(f"Imported {success} feeds, failed: {failed}")
     return redirect(url_for('web.index'))
