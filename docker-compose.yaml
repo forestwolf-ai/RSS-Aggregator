@@ -1,10 +1,12 @@
 version: '3'
+
 services:
   rss:
     build: .
+    container_name: rss_aggregator
     ports:
       - "5000:5000"
     volumes:
       - ./data:/app/data
-      - ./config.yaml:/app/config.yaml
+      - ./config.yaml:/app/config.yaml:ro
     restart: unless-stopped
