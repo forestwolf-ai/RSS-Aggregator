@@ -22,14 +22,14 @@
 
     <!-- 搜索表单 -->
     <form action="{{ url_for('web.search') }}" method="get">
-        <input type="text" name="q" placeholder="Search..." value="{{ request.args.get('q', '') }}">
+        <input type="text" name="q" placeholder="Search..." value="{{ search_query|default('') }}">
         <select name="source_id">
             <option value="">All Sources</option>
             {% for s in sources %}
-            <option value="{{ s.id }}" {% if request.args.get('source_id')|int == s.id %}selected{% endif %}>{{ s.name }}</option>
+            <option value="{{ s.id }}" {% if search_source_id == s.id %}selected{% endif %}>{{ s.name }}</option>
             {% endfor %}
         </select>
-        <label><input type="checkbox" name="unread" value="true" {% if request.args.get('unread') == 'true' %}checked{% endif %}> Unread only</label>
+        <label><input type="checkbox" name="unread" value="true" {% if search_unread %}checked{% endif %}> Unread only</label>
         <button type="submit">Search</button>
     </form>
 
@@ -63,12 +63,28 @@
     </ul>
 
     <h2>{{ _('articles') }}</h2>
-    {% for article in articles %}
+    {% for article in articles.items %}
         <div>
             <h3><a href="{{ article.link }}" target="_blank">{{ article.title }}</a></h3>
             <p>{{ article.summary|truncate(200) }}</p>
+            {% if article.content %}
+                <p>{{ article.content|truncate(300) }}</p>
+            {% endif %}
             <small>{{ article.published }}</small>
         </div>
     {% endfor %}
+
+    <!-- 分页导航 -->
+    {% if articles.has_prev or articles.has_next %}
+    <div>
+        {% if articles.has_prev %}
+            <a href="{{ url_for(request.endpoint, page=articles.prev_num, **request.view_args) }}">Previous</a>
+        {% endif %}
+        <span>Page {{ articles.page }} / {{ articles.pages }}</span>
+        {% if articles.has_next %}
+            <a href="{{ url_for(request.endpoint, page=articles.next_num, **request.view_args) }}">Next</a>
+        {% endif %}
+    </div>
+    {% endif %}
 </body>
 </html>
