@@ -11,12 +11,18 @@ class Source(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     articles = db.relationship('Article', backref='source', lazy='dynamic', cascade="all, delete-orphan")
 
+    def __repr__(self):
+        return f"<Source {self.name}>"
+
 class Article(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(500))
     link = db.Column(db.String(1000))
     summary = db.Column(db.Text)
-    content = db.Column(db.Text)
+    content = db.Column(db.Text)  # 全文内容
     published = db.Column(db.DateTime)
     read = db.Column(db.Boolean, default=False)
     source_id = db.Column(db.Integer, db.ForeignKey('source.id'))
+
+    def __repr__(self):
+        return f"<Article {self.title}>"
