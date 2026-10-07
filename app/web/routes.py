@@ -12,6 +12,7 @@
 6. 补上「标记已读」入口，让 unread 过滤形成闭环（原来 read 永远是 False）。
 """
 import logging
+import re
 
 from flask import (
     Blueprint,
@@ -41,6 +42,10 @@ DEFAULT_INTERVAL_MINUTES = 30
 PER_PAGE = 50
 MAX_OPML_BYTES = 5 * 1024 * 1024
 FILTER_KEYS = ("q", "source_id", "unread", "lang")
+MAX_URL_CHARS = 500      # 与 Source.url 的列宽一致
+MAX_NAME_CHARS = 200     # 与 Source.name 的列宽一致
+MAX_CATEGORY_CHARS = 100  # 与 Source.category 的列宽一致
+_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 
 web_bp = Blueprint("web", __name__, template_folder="templates")
 web_bp.before_request(check_csrf_origin)
@@ -121,10 +126,35 @@ def _schedule_all():
 
 
 def _local_redirect(candidate, fallback):
-    """只接受站内相对路径，避免开放重定向。"""
-    if candidate and candidate.startswith("/") and not candidate.startswith("//"):
+    """只接受站内相对路径，避免开放重定向。
+
+    同时拒绝控制字符：换行符会被 Werkzeug 判定为响应头注入并抛
+    `ValueError: Header values must not contain newline characters`，
+    表现为用户提交一个带换行的 next 就让请求 500。
+    """
+    if (
+        candidate
+        and candidate.startswith("/")
+        and not candidate.startswith("//")
+        and not _CONTROL_CHARS.search(candidate)
+    ):
         return candidate
     return fallback
+
+
+def _t(key, **kwargs):
+    """按当前界面语言取提示文案。"""
+    text = translate(key, _language())
+    return text.format(**kwargs) if kwargs else text
+
+
+def _too_long(field_label_key, value, limit):
+    return _t(
+        "msg_field_too_long",
+        field=_t(field_label_key),
+        length=len(value),
+        limit=limit,
+    ) if value and len(value) > limit else None
 
 
 def _allow_private():
@@ -193,38 +223,52 @@ def add_source():
     category = (request.form.get("category") or "").strip() or "General"
 
     if not url:
-        flash("Feed URL is required.")
+        flash(_t("msg_url_required"))
         return redirect(url_for("web.index"))
+
+    # 超长输入必须明确拒绝：截断会把地址悄悄换成一个「另一个 URL」再去抓取
+    if len(url) > MAX_URL_CHARS:
+        logger.warning("拒绝超长订阅地址：%d 字符", len(url))
+        flash(_t("msg_url_too_long", length=len(url), limit=MAX_URL_CHARS))
+        return redirect(url_for("web.index"))
+    for label_key, value, limit in (
+        ("name", name, MAX_NAME_CHARS),
+        ("category", category, MAX_CATEGORY_CHARS),
+    ):
+        message = _too_long(label_key, value, limit)
+        if message:
+            flash(message)
+            return redirect(url_for("web.index"))
 
     if not is_safe_url(url, allow_private=_allow_private()):
         logger.warning("拒绝添加被安全策略拦截的地址: %s", url)
-        flash("该地址被安全策略拒绝（不允许内网/回环地址）")
+        flash(_t("msg_url_blocked"))
         return redirect(url_for("web.index"))
 
     if Source.query.filter_by(url=url).first():
-        flash(f"Feed already exists: {url}")
+        flash(_t("msg_feed_exists", url=url))
         return redirect(url_for("web.index"))
 
     interval = _parse_interval(
         request.form.get("interval"),
         current_app.config.get("SCHEDULER_DEFAULT_INTERVAL", DEFAULT_INTERVAL_MINUTES),
     )
-    source = Source(name=name or url, url=url[:500], category=category[:100], interval=interval)
+    source = Source(name=name or url, url=url, category=category, interval=interval)
     db.session.add(source)
     try:
         db.session.commit()
     except IntegrityError:
         db.session.rollback()
-        flash(f"Feed already exists: {url}")
+        flash(_t("msg_feed_exists", url=url))
         return redirect(url_for("web.index"))
 
     _schedule(source)
 
+    # 失败原因只写日志：原来把异常原文（连接池/DNS 报错）直接显示给用户
     ok, message = fetch_source(source.id, notify=True)
-    if ok:
-        flash(f"Source added. {message}")
-    else:
-        flash(f"Source added, but the first fetch failed: {message}")
+    flash(_t("msg_source_added") if ok else _t("msg_source_added_fetch_failed"))
+    if not ok:
+        logger.warning("源 %s 首次抓取失败: %s", source.id, message)
     return redirect(url_for("web.index"))
 
 
@@ -238,7 +282,7 @@ def delete_source(source_id):
     label = source.name or source.url
     db.session.delete(source)
     db.session.commit()
-    flash(f"Deleted source: {label}")
+    flash(_t("msg_source_deleted", name=label))
     return redirect(url_for("web.index"))
 
 
@@ -246,7 +290,11 @@ def delete_source(source_id):
 def refresh_source(source_id):
     source = db.get_or_404(Source, source_id)
     ok, message = fetch_source(source.id, notify=True)
-    flash(message if ok else f"Fetch failed: {message}")
+    if ok:
+        flash(_t("msg_refresh_ok"))
+    else:
+        flash(_t("msg_refresh_failed"))
+        logger.warning("手动刷新源 %s 失败: %s", source.id, message)
     return redirect(url_for("web.index"))
 
 
@@ -287,18 +335,18 @@ def export_opml_route():
 def import_opml_route():
     upload = request.files.get("opml_file")
     if upload is None or not upload.filename:
-        flash("请选择要导入的 OPML 文件")
+        flash(_t("msg_opml_no_file"))
         return redirect(url_for("web.index"))
 
     raw = upload.read(MAX_OPML_BYTES + 1)
     if len(raw) > MAX_OPML_BYTES:
-        flash("OPML 文件过大（上限 5 MB）")
+        flash(_t("msg_opml_too_large", limit=MAX_OPML_BYTES // (1024 * 1024)))
         return redirect(url_for("web.index"))
 
     success, failed = import_opml(raw, allow_private=_allow_private())
     if success:
         _schedule_all()  # 新导入的源也要进入调度
-    flash(f"Imported {success} feeds, failed: {failed}")
+    flash(_t("msg_opml_result", success=success, failed=failed))
     return redirect(url_for("web.index"))
 
 

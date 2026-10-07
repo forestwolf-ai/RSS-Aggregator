@@ -68,6 +68,7 @@ rss_aggregator/
 ├── tests/
 │   ├── test_bugfixes.py       # 回归测试（30 例）
 │   ├── test_v13_bugs.py       # v1.3 审查用例（8 例）
+│   ├── test_v14_bugs.py       # v1.4 审查用例 + 仓库布局检查（7 例）
 │   ├── test_e2e_smoke.py      # 端到端冒烟测试（会真的启动服务）
 │   └── test_debug_reloader.py # 验证 --debug 下调度器只启动一次
 ├── main.py                  # 程序入口

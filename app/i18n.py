@@ -28,6 +28,22 @@ TRANSLATIONS = {
         "previous": "Previous",
         "next": "Next",
         "page": "Page",
+        # 提示信息（原来散落在路由里的硬编码字符串）
+        "msg_url_required": "Feed URL is required.",
+        "msg_url_blocked": "That address is blocked by the security policy "
+                           "(internal and loopback addresses are not allowed).",
+        "msg_url_too_long": "Feed URL is too long: {length} characters, limit is {limit}.",
+        "msg_field_too_long": "{field} is too long: {length} characters, limit is {limit}.",
+        "msg_feed_exists": "Feed already exists: {url}",
+        "msg_source_added": "Source added and fetched.",
+        "msg_source_added_fetch_failed": "Source added, but the first fetch failed. "
+                                         "See the log for details.",
+        "msg_source_deleted": "Deleted source: {name}",
+        "msg_refresh_ok": "Feed refreshed.",
+        "msg_refresh_failed": "Refresh failed. See the log for details.",
+        "msg_opml_no_file": "Choose an OPML file to import.",
+        "msg_opml_too_large": "OPML file is too large (limit is {limit} MB).",
+        "msg_opml_result": "Imported {success} feeds, failed: {failed}",
     },
     "zh": {
         "app_name": "RSS聚合器",
@@ -58,6 +74,20 @@ TRANSLATIONS = {
         "previous": "上一页",
         "next": "下一页",
         "page": "页",
+        # 提示信息
+        "msg_url_required": "请填写订阅地址。",
+        "msg_url_blocked": "该地址被安全策略拒绝（不允许内网/回环地址）。",
+        "msg_url_too_long": "订阅地址过长：{length} 个字符，上限 {limit} 个。",
+        "msg_field_too_long": "{field}过长：{length} 个字符，上限 {limit} 个。",
+        "msg_feed_exists": "该订阅已存在：{url}",
+        "msg_source_added": "源已添加，并完成首次抓取。",
+        "msg_source_added_fetch_failed": "源已添加，但首次抓取失败，详细原因见日志。",
+        "msg_source_deleted": "已删除源：{name}",
+        "msg_refresh_ok": "已完成刷新。",
+        "msg_refresh_failed": "刷新失败，详细原因见日志。",
+        "msg_opml_no_file": "请选择要导入的 OPML 文件。",
+        "msg_opml_too_large": "OPML 文件过大（上限 {limit} MB）。",
+        "msg_opml_result": "已导入 {success} 个订阅，失败 {failed} 个",
     },
 }
 

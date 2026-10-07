@@ -68,6 +68,7 @@ rss_aggregator/
 ├── tests/
 │   ├── test_bugfixes.py       # Regression tests (30 cases)
 │   ├── test_v13_bugs.py       # v1.3 audit tests (8 cases)
+│   ├── test_v14_bugs.py       # v1.4 audit tests + repository layout checks (7 cases)
 │   ├── test_e2e_smoke.py      # End-to-end smoke test (starts a real server)
 │   └── test_debug_reloader.py # Verifies the scheduler starts only once under --debug
 ├── main.py                  # Entry point

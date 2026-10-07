@@ -87,6 +87,13 @@ def _build_articles(source, feed):
         link = _entry_link(entry)
         if not link or link in existing or link in seen:
             continue
+        if len(link) > MAX_LINK_CHARS:
+            # 截断会把它变成一个「另一个 URL」：宁可跳过，也不能存错地址
+            logger.warning(
+                "跳过链接过长的条目（%d 字符，上限 %d）: %.60s...",
+                len(link), MAX_LINK_CHARS, link,
+            )
+            continue
         seen.add(link)
 
         embedded = entry.get("content")
@@ -104,7 +111,7 @@ def _build_articles(source, feed):
         created.append(
             Article(
                 title=(entry.get("title") or "Untitled")[:MAX_TITLE_CHARS],
-                link=link[:MAX_LINK_CHARS],
+                link=link,
                 summary=entry.get("summary") or "",
                 content=content,
                 published=_entry_published(entry),
