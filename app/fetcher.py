@@ -1,70 +1,211 @@
+"""RSS 抓取。
+
+修复要点：
+1. 失败分支必须 `db.session.rollback()`。原来出错直接 return，已 add 但未提交的
+   文章会留在 session 里，被之后任意一次 commit 悄悄写进数据库。
+2. 去重查询改为一次批量 SELECT。原来每个条目查一次，50 条就是 50 次查询。
+3. 全文抽取不再是「每个没有 content 的条目都同步抓一次网页」（最多 50 × 10s），
+   改为受 fulltext.enabled / max_per_fetch / timeout 控制，避免请求线程被拖死。
+4. 抓取前做 URL 安全校验（SSRF），默认拒绝内网/回环/链路本地地址。
+5. 并发写入撞上唯一约束时逐条降级重试，而不是让整批抓取失败。
+6. 通知邮件在事务提交之后发送，且失败不影响抓取结果。
+"""
+import logging
+import time
+from datetime import datetime
+
 import feedparser
 import requests
-import time
-import logging
-from datetime import datetime
+from flask import current_app, has_app_context
+from sqlalchemy.exc import DBAPIError, IntegrityError
+
 from app import db
-from app.models import Source, Article
 from app.fulltext import extract_full_text
+from app.models import Article, Source, utcnow
+from app.urlsafety import is_safe_url
 
 logger = logging.getLogger(__name__)
 
+MAX_CONTENT_CHARS = 5000
+MAX_TITLE_CHARS = 500
+MAX_LINK_CHARS = 1000
+LINK_QUERY_CHUNK = 400  # SQLite 的 SQL 变量上限是 999，分批查询
+
+
+def _config(key, default=None):
+    return current_app.config.get(key, default)
+
+
+def _entry_link(entry):
+    link = entry.get("link") or entry.get("id") or ""
+    return link.strip() if isinstance(link, str) else ""
+
+
+def _entry_published(entry):
+    """条目时间；feedparser 已把时间归一到 UTC struct_time。"""
+    for key in ("published_parsed", "updated_parsed"):
+        parsed = entry.get(key)
+        if parsed:
+            try:
+                return datetime(*parsed[:6])
+            except (TypeError, ValueError):
+                logger.debug("无法解析时间字段 %s: %r", key, parsed)
+    return utcnow()
+
+
+def _existing_links(links):
+    """一次性查出已存在的链接。"""
+    if not links:
+        return set()
+    found = set()
+    for start in range(0, len(links), LINK_QUERY_CHUNK):
+        chunk = links[start:start + LINK_QUERY_CHUNK]
+        rows = db.session.query(Article.link).filter(Article.link.in_(chunk)).all()
+        found.update(row[0] for row in rows)
+    return found
+
+
+def _build_articles(source, feed):
+    """把 feed 条目转成待入库的 Article，返回 (新增列表, 跳过全文抽取数)。"""
+    max_entries = max(0, int(_config("FETCH_MAX_ENTRIES", 50)))
+    entries = list(feed.entries[:max_entries]) if max_entries else []
+
+    existing = _existing_links([link for link in (_entry_link(e) for e in entries) if link])
+
+    fulltext_budget = 0
+    if _config("FULLTEXT_ENABLED", True):
+        fulltext_budget = max(0, int(_config("FULLTEXT_MAX_PER_FETCH", 5)))
+    fulltext_timeout = int(_config("FULLTEXT_TIMEOUT", 10))
+    allow_private = bool(_config("SECURITY_ALLOW_PRIVATE_NETWORKS", False))
+
+    created = []
+    skipped = 0
+    seen = set()
+    for entry in entries:
+        link = _entry_link(entry)
+        if not link or link in existing or link in seen:
+            continue
+        seen.add(link)
+
+        embedded = entry.get("content")
+        if embedded:
+            content = (embedded[0].get("value") or "")[:MAX_CONTENT_CHARS]
+        elif fulltext_budget > 0:
+            fulltext_budget -= 1
+            content = extract_full_text(
+                link, timeout=fulltext_timeout, allow_private=allow_private
+            )[:MAX_CONTENT_CHARS]
+        else:
+            content = ""
+            skipped += 1
+
+        created.append(
+            Article(
+                title=(entry.get("title") or "Untitled")[:MAX_TITLE_CHARS],
+                link=link[:MAX_LINK_CHARS],
+                summary=entry.get("summary") or "",
+                content=content,
+                published=_entry_published(entry),
+                source_id=source.id,
+            )
+        )
+    return created, skipped
+
+
+def _persist(articles):
+    """批量入库；撞上唯一约束时降级为逐条 savepoint 重试。"""
+    if not articles:
+        return 0
+
+    for article in articles:
+        db.session.add(article)
+    try:
+        db.session.commit()
+        return len(articles)
+    except IntegrityError:
+        db.session.rollback()
+        logger.warning("检测到并发写入造成的重复条目，改为逐条入库")
+
+    saved = 0
+    for article in articles:
+        try:
+            with db.session.begin_nested():
+                db.session.add(article)
+            saved += 1
+        except IntegrityError:
+            logger.debug("跳过重复文章: %s", article.link)
+    db.session.commit()
+    return saved
+
+
+def _notify(source, articles, saved):
+    """发送通知邮件；任何异常都不影响抓取结果。"""
+    try:
+        from app.notifications import send_email
+
+        subject = f"RSS Aggregator: {source.name} 更新了 {saved} 篇文章"
+        body = "\n".join(article.title or "" for article in articles) or f"{saved} new articles"
+        send_email(subject, body)
+    except Exception as exc:  # noqa: BLE001 - 通知失败不能影响抓取
+        logger.error("发送通知邮件失败: %s", exc)
+
+
 def fetch_source(source_id, notify=False):
-    source = Source.query.get(source_id)
-    if not source:
+    """抓取一个源。必须在应用上下文中调用（调度器已自动推入上下文）。"""
+    if not has_app_context():
+        raise RuntimeError(
+            "fetch_source 需要 Flask 应用上下文；后台任务请通过 app.scheduler 注册"
+        )
+
+    source = db.session.get(Source, source_id)
+    if source is None:
         return False, "Source not found"
 
-    retries = 3
-    for attempt in range(retries):
+    allow_private = bool(_config("SECURITY_ALLOW_PRIVATE_NETWORKS", False))
+    if not is_safe_url(source.url, allow_private=allow_private):
+        logger.warning("抓取被安全策略拒绝（疑似内网地址）: %s", source.url)
+        return False, "URL blocked by security policy"
+
+    retries = max(1, int(_config("FETCH_RETRIES", 3)))
+    timeout = int(_config("FETCH_TIMEOUT", 15))
+    headers = {"User-Agent": _config("FETCH_USER_AGENT", "RSSAggregator/1.0")}
+    last_error = "unknown error"
+
+    for attempt in range(1, retries + 1):
         try:
-            resp = requests.get(source.url, timeout=15, headers={'User-Agent': 'Mozilla/5.0'})
-            if resp.status_code != 200:
-                raise Exception(f"HTTP {resp.status_code}")
-            feed = feedparser.parse(resp.content)
+            response = requests.get(source.url, timeout=timeout, headers=headers)
+            if response.status_code != 200:
+                raise requests.HTTPError(f"HTTP {response.status_code}", response=response)
+
+            feed = feedparser.parse(response.content)
             if feed.bozo:
-                logger.warning(f"Feed parse warning for {source.url}: {feed.bozo_exception}")
+                logger.warning("Feed 解析告警 %s: %s", source.url, feed.get("bozo_exception"))
+                if not feed.entries:
+                    raise ValueError(f"Feed 无法解析: {feed.get('bozo_exception')}")
 
-            new_articles = []
-            for entry in feed.entries[:50]:
-                link = entry.get('link', '')
-                if not link:
-                    continue
-                if Article.query.filter_by(link=link).first():
-                    continue
+            created, skipped = _build_articles(source, feed)
+            saved = _persist(created)
 
-                # 获取全文（如需要）
-                content = ''
-                if 'content' in entry and entry.content:
-                    content = entry.content[0].value[:5000]
-                else:
-                    content = extract_full_text(link)
-
-                article = Article(
-                    title=entry.get('title', 'Untitled'),
-                    link=link,
-                    summary=entry.get('summary', ''),
-                    content=content,
-                    published=datetime(*entry.published_parsed[:6]) if entry.get('published_parsed') else datetime.utcnow(),
-                    source_id=source.id
-                )
-                db.session.add(article)
-                new_articles.append(article)
-
-            source.last_fetched = datetime.utcnow()
+            source.last_fetched = utcnow()
             db.session.commit()
+        except Exception as exc:  # noqa: BLE001 - 统一走重试/失败分支
+            db.session.rollback()
+            last_error = str(exc) or exc.__class__.__name__
+            retryable = isinstance(exc, (requests.RequestException, DBAPIError))
+            logger.error(
+                "抓取 %s 第 %d/%d 次失败: %s", source.url, attempt, retries, last_error
+            )
+            if attempt >= retries or not retryable:
+                break
+            time.sleep(min(2 ** attempt, 10))
+            continue
 
-            # 发送邮件通知
-            if notify and new_articles:
-                from app.notifications import send_email
-                subject = f"RSS Aggregator: {source.name} 更新了 {len(new_articles)} 篇文章"
-                body = "\n".join([a.title for a in new_articles])
-                send_email(subject, body)
+        if notify and saved:
+            _notify(source, created, saved)
+        logger.info(
+            "从 %s 抓取到 %d 条新文章（%d 条因全文抽取配额未抓正文）",
+            source.name, saved, skipped,
+        )
+        return True, f"Fetched {saved} new entries"
 
-            logger.info(f"Fetched {len(new_articles)} new entries from {source.name}")
-            return True, f"Fetched {len(new_articles)} new entries"
-        except Exception as e:
-            logger.error(f"Fetch attempt {attempt+1} failed for {source.url}: {e}")
-            if attempt == retries - 1:
-                return False, str(e)
-            time.sleep(2)
-    return False, "Failed after retries"
+    return False, last_error

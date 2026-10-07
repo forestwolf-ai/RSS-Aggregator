@@ -23,7 +23,7 @@ A feature-rich, self-hosted RSS feed aggregator with scheduled fetching, OPML im
 - **Keyword Filtering & Full-Text Search**: Search across title, summary, and content, with optional filtering by source and unread status.
 - **Custom Update Frequency**: Each source can have its own fetch interval.
 - **Email Notifications**: Configure SMTP to receive email alerts when new articles are fetched.
-- **Docker Deployment**: Dockerfile and docker-compose.yml provided for easy deployment.
+- **Docker Deployment**: Dockerfile and docker-compose.yaml provided for easy deployment.
 
 ---
 
@@ -50,8 +50,11 @@ rss_aggregator/
 │   ├── __init__.py          # Application initialization
 │   ├── config.py            # Configuration loader
 │   ├── models.py            # ORM models (Source, Article)
+│   ├── schema.py            # Create tables and backfill indexes
 │   ├── fetcher.py           # RSS fetching with retry logic
 │   ├── scheduler.py         # Background scheduler
+│   ├── urlsafety.py         # SSRF guard for outbound URLs
+│   ├── security.py          # Cross-site request origin check
 │   ├── i18n.py              # English/Chinese translations
 │   ├── opml.py              # OPML import/export
 │   ├── fulltext.py          # Full-text extraction
@@ -62,15 +65,22 @@ rss_aggregator/
 │       ├── routes.py        # Routes and views
 │       └── templates/
 │           ├── index.html   # Main page template
+├── tests/
+│   ├── test_bugfixes.py     # Regression tests (python tests/test_bugfixes.py)
+│   └── test_e2e_smoke.py    # End-to-end smoke test
 ├── main.py                  # Entry point
 ├── config.yaml              # Configuration file
 ├── requirements.txt         # Python dependencies
-├── Dockerfile
-├── docker-compose.yml
+├── Dockerfile               # Must stay at the build context root (compose uses `build: .`)
+├── docker-compose.yaml
 ├── CHANGELOG.md             # Version history
+├── .dockerignore
 ├── .gitignore
 └── README.md                # This file
 ```
+
+> **Security note**: the app has no authentication. Keep it on a trusted network
+> (or behind a reverse proxy that adds auth) instead of exposing it to the internet.
 
 ---
 
@@ -114,32 +124,54 @@ The configuration file is `config.yaml`. Below is a sample with comments:
 
 ```yaml
 app:
-  name: "RSS Aggregator"       # Application name
+  name: "RSS Aggregator"       # Application name (shown in the UI)
   language: "en"               # Default language: en or zh
   timezone: "Asia/Shanghai"    # Timezone for scheduler
+  # secret_key: "..."          # Optional; a random key is generated per start if absent
 
 database:
-  url: "sqlite:///rss.db"      # SQLite or PostgreSQL URL
+  # Relative SQLite paths are anchored to the project root, so this file is
+  # <project>/data/rss.db locally and /app/data/rss.db in the container (mounted volume).
+  url: "sqlite:///data/rss.db"
   # Example PostgreSQL: postgresql://user:password@localhost/dbname
 
 scheduler:
   enabled: true                # Enable/disable automatic fetching
-  default_interval: 30         # Default update interval (minutes)
+  default_interval: 30         # Default update interval (minutes, minimum 5)
 
 server:
   host: "0.0.0.0"              # Listen address
   port: 5000
   debug: false
 
+fetch:
+  retries: 3                   # Retries for network errors
+  timeout: 15                  # Per-request timeout (seconds)
+  max_entries: 50              # Max entries processed per fetch
+
+fulltext:
+  enabled: true
+  max_per_fetch: 5             # Max articles fetched in full per run (0 disables)
+  timeout: 10
+
+security:
+  allow_private_networks: false  # Keep false to block SSRF to internal addresses
+  csrf_origin_check: true        # Reject cross-site POSTs (Origin/Referer check)
+
+logging:
+  level: "INFO"
+  file: "rss_aggregator.log"
+
 notifications:
   email:
     enabled: false             # Enable email notifications
     smtp_server: "smtp.example.com"
     smtp_port: 587
+    use_tls: true
     username: "user@example.com"
     password: "password"
     from_addr: "user@example.com"
-    to_addr: "user@example.com"
+    to_addr: "user@example.com"  # Multiple recipients: comma separated
 ```
 
 ---

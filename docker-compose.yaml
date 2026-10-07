@@ -1,11 +1,13 @@
-version: '3'
-
+# 注意：Dockerfile 必须位于本目录（构建上下文根），compose 的 `build: .` 才能找到它。
 services:
   rss:
     build: .
     container_name: rss_aggregator
     ports:
       - "5000:5000"
+    environment:
+      # 相对 sqlite 路径已锚定到项目根目录（容器内 /app），因此数据库就落在下面的数据卷里
+      TZ: Asia/Shanghai
     volumes:
       - ./data:/app/data
       - ./config.yaml:/app/config.yaml:ro

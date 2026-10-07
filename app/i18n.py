@@ -8,7 +8,16 @@ TRANSLATIONS = {
         "sources": "Sources",
         "articles": "Articles",
         "all": "All",
+        "all_sources": "All Sources",
         "unread": "Unread",
+        "unread_only": "Unread only",
+        "mark_read": "Mark as read",
+        "mark_unread": "Mark as unread",
+        "no_articles": "No articles yet.",
+        "name": "Name",
+        "category": "Category",
+        "last_fetched": "Last fetched",
+        "delete_confirm": "Delete this source and all its articles?",
         "settings": "Settings",
         "language": "Language",
         "interval": "Update Interval (minutes)",
@@ -29,7 +38,16 @@ TRANSLATIONS = {
         "sources": "源",
         "articles": "文章",
         "all": "全部",
+        "all_sources": "全部来源",
         "unread": "未读",
+        "unread_only": "只看未读",
+        "mark_read": "标记已读",
+        "mark_unread": "标记未读",
+        "no_articles": "还没有文章。",
+        "name": "名称",
+        "category": "分类",
+        "last_fetched": "上次抓取",
+        "delete_confirm": "删除该源及其全部文章？",
         "settings": "设置",
         "language": "语言",
         "interval": "更新间隔（分钟）",
@@ -40,8 +58,10 @@ TRANSLATIONS = {
         "previous": "上一页",
         "next": "下一页",
         "page": "页",
-    }
+    },
 }
 
-def translate(key, lang='en'):
-    return TRANSLATIONS.get(lang, {}).get(key, key)
+
+def translate(key, lang="en"):
+    """取翻译；未知语言或缺失键回退到英文，再回退到键名本身。"""
+    return TRANSLATIONS.get(lang, {}).get(key) or TRANSLATIONS["en"].get(key) or key

@@ -2,25 +2,50 @@ app:
   name: "RSS Aggregator"
   language: "en"           # en / zh
   timezone: "Asia/Shanghai"
+  # secret_key: "改成你自己的随机字符串"   # 不配置则每次启动随机生成（flash 消息重启后失效）
 
 database:
-  url: "sqlite:///rss.db"
+  # 相对路径锚定到项目根目录；容器内 WORKDIR=/app，因此实际落在 /app/data（已挂载的数据卷）
+  url: "sqlite:///data/rss.db"
+  # PostgreSQL 示例: postgresql://user:password@localhost/dbname
 
 scheduler:
   enabled: true
-  default_interval: 30     # minutes
+  default_interval: 30     # 新增源的默认更新间隔（分钟，最小 5）
 
 server:
   host: "0.0.0.0"
   port: 5000
   debug: false
 
+fetch:
+  retries: 3               # 网络类错误的重试次数
+  timeout: 15              # 单次请求超时（秒）
+  max_entries: 50          # 每次抓取最多处理多少条
+  user_agent: "RSSAggregator/1.0 (+https://github.com/forestwolf-ai/RSS-Aggregator)"
+
+fulltext:
+  enabled: true
+  max_per_fetch: 5         # 每次抓取最多为几篇文章抓正文（0 = 关闭，避免请求被拖死）
+  timeout: 10
+
+security:
+  # 是否允许抓取内网/回环地址。默认 false（防 SSRF）；只订阅内网源时再打开
+  allow_private_networks: false
+  # 校验跨站 POST 的 Origin/Referer（CSRF 的最低成本防线，不能替代登录鉴权）
+  csrf_origin_check: true
+
+logging:
+  level: "INFO"
+  file: "rss_aggregator.log"
+
 notifications:
   email:
     enabled: false
     smtp_server: "smtp.example.com"
     smtp_port: 587
+    use_tls: true
     username: "user@example.com"
     password: "password"
     from_addr: "user@example.com"
-    to_addr: "user@example.com"
+    to_addr: "user@example.com"   # 多个收件人用英文逗号分隔

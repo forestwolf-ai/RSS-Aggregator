@@ -23,7 +23,7 @@
 - **关键词过滤与全文搜索**：支持按标题、摘要、正文搜索，可结合源分类和未读状态过滤。
 - **自定义更新频率**：每个源可单独配置抓取间隔，灵活控制资源占用。
 - **邮件推送通知**：配置 SMTP 后，抓取到新文章可自动发送邮件提醒。
-- **Docker 部署**：提供 Dockerfile 和 docker-compose.yml，方便快速部署。
+- **Docker 部署**：提供 Dockerfile 和 docker-compose.yaml，方便快速部署。
 
 ---
 
@@ -50,8 +50,11 @@ rss_aggregator/
 │   ├── __init__.py          # 应用初始化
 │   ├── config.py            # 配置加载器
 │   ├── models.py            # ORM 模型（Source、Article）
+│   ├── schema.py            # 建表并补齐索引
 │   ├── fetcher.py           # RSS 抓取与重试逻辑
 │   ├── scheduler.py         # 后台调度器
+│   ├── urlsafety.py         # 出站 URL 安全校验（防 SSRF）
+│   ├── security.py          # 跨站请求来源校验
 │   ├── i18n.py              # 中英文翻译
 │   ├── opml.py              # OPML 导入导出
 │   ├── fulltext.py          # 全文提取
@@ -62,15 +65,22 @@ rss_aggregator/
 │       ├── routes.py        # 路由与视图
 │       └── templates/
 │           ├── index.html   # 主页面模板
+├── tests/
+│   ├── test_bugfixes.py     # 回归测试（python tests/test_bugfixes.py）
+│   └── test_e2e_smoke.py    # 端到端冒烟测试
 ├── main.py                  # 程序入口
 ├── config.yaml              # 配置文件
 ├── requirements.txt         # Python 依赖
-├── Dockerfile
-├── docker-compose.yml
+├── Dockerfile               # 必须留在构建上下文根目录（compose 用 `build: .`）
+├── docker-compose.yaml
 ├── CHANGELOG.md             # 版本历史
+├── .dockerignore
 ├── .gitignore
 └── README.md                # 本文件（英文版）
 ```
+
+> **安全提示**：本项目没有登录鉴权。请部署在可信内网，或放在带鉴权的反向代理之后，
+> 不要直接暴露到公网。
 
 ---
 
@@ -114,32 +124,54 @@ rss_aggregator/
 
 ```yaml
 app:
-  name: "RSS Aggregator"       # 应用名称
+  name: "RSS Aggregator"       # 应用名称（显示在页面上）
   language: "zh"               # 默认语言：en 或 zh
   timezone: "Asia/Shanghai"    # 调度器时区
+  # secret_key: "..."          # 可选；不配置则每次启动随机生成
 
 database:
-  url: "sqlite:///rss.db"      # SQLite 或 PostgreSQL 连接字符串
+  # 相对 SQLite 路径锚定到项目根目录：本地是 <项目>/data/rss.db，
+  # 容器内是 /app/data/rss.db（即被挂载的数据卷）
+  url: "sqlite:///data/rss.db"
   # PostgreSQL 示例：postgresql://user:password@localhost/dbname
 
 scheduler:
   enabled: true                # 是否启用自动抓取
-  default_interval: 30         # 默认更新间隔（分钟）
+  default_interval: 30         # 默认更新间隔（分钟，最小 5）
 
 server:
   host: "0.0.0.0"              # 监听地址
   port: 5000
   debug: false
 
+fetch:
+  retries: 3                   # 网络类错误的重试次数
+  timeout: 15                  # 单次请求超时（秒）
+  max_entries: 50              # 每次抓取最多处理多少条
+
+fulltext:
+  enabled: true
+  max_per_fetch: 5             # 每次最多为几篇文章抓正文（0 = 关闭）
+  timeout: 10
+
+security:
+  allow_private_networks: false  # 保持 false 可阻止抓取内网地址（防 SSRF）
+  csrf_origin_check: true        # 拒绝跨站 POST（Origin/Referer 校验）
+
+logging:
+  level: "INFO"
+  file: "rss_aggregator.log"
+
 notifications:
   email:
     enabled: false             # 是否启用邮件通知
     smtp_server: "smtp.example.com"
     smtp_port: 587
+    use_tls: true
     username: "user@example.com"
     password: "password"
     from_addr: "user@example.com"
-    to_addr: "user@example.com"
+    to_addr: "user@example.com"  # 多个收件人用英文逗号分隔
 ```
 
 ---
