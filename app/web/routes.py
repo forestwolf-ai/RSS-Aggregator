@@ -22,6 +22,7 @@ from flask import (
     request,
     url_for,
 )
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from app import db
@@ -167,7 +168,18 @@ def search():
 
 @web_bp.route("/healthz")
 def healthz():
-    """容器健康检查用。"""
+    """容器健康检查。
+
+    必须真的探一次数据库：原来直接返回 "ok"，
+    数据库或表结构坏掉时容器仍被判为健康，故障不会被重启发现。
+    """
+    try:
+        with db.engine.connect() as conn:
+            for table in ("source", "article"):
+                conn.execute(text(f"SELECT 1 FROM {table} LIMIT 1"))
+    except Exception as exc:  # noqa: BLE001 - 健康检查本身不能抛异常
+        logger.warning("健康检查失败: %s", exc)
+        return "database unavailable", 503, {"Content-Type": "text/plain; charset=utf-8"}
     return "ok", 200, {"Content-Type": "text/plain; charset=utf-8"}
 
 

@@ -66,8 +66,10 @@ rss_aggregator/
 │       └── templates/
 │           ├── index.html   # 主页面模板
 ├── tests/
-│   ├── test_bugfixes.py     # 回归测试（python tests/test_bugfixes.py）
-│   └── test_e2e_smoke.py    # 端到端冒烟测试
+│   ├── test_bugfixes.py       # 回归测试（30 例）
+│   ├── test_v13_bugs.py       # v1.3 审查用例（8 例）
+│   ├── test_e2e_smoke.py      # 端到端冒烟测试（会真的启动服务）
+│   └── test_debug_reloader.py # 验证 --debug 下调度器只启动一次
 ├── main.py                  # 程序入口
 ├── config.yaml              # 配置文件
 ├── requirements.txt         # Python 依赖
@@ -148,11 +150,13 @@ fetch:
   retries: 3                   # 网络类错误的重试次数
   timeout: 15                  # 单次请求超时（秒）
   max_entries: 50              # 每次抓取最多处理多少条
+  max_bytes: 8388608           # feed 响应体上限（字节，8 MB），超出即截断
 
 fulltext:
   enabled: true
   max_per_fetch: 5             # 每次最多为几篇文章抓正文（0 = 关闭）
   timeout: 10
+  max_bytes: 2097152           # 文章页响应体上限（字节，2 MB）
 
 security:
   allow_private_networks: false  # 保持 false 可阻止抓取内网地址（防 SSRF）

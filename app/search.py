@@ -43,7 +43,9 @@ def search_articles(query, source_id=None, unread_only=False, page=1, per_page=5
         q = q.filter(Article.source_id == source_id)
 
     if unread_only:
-        q = q.filter(Article.read.is_(False))
+        # read 为 NULL（历史数据或外部写入）并不是「已读」，
+        # 只判 is_(False) 会让这些文章从「只看未读」里凭空消失。
+        q = q.filter(or_(Article.read.is_(False), Article.read.is_(None)))
 
     try:
         page = max(1, int(page or 1))

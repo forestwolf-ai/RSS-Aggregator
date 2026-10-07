@@ -66,8 +66,10 @@ rss_aggregator/
 │       └── templates/
 │           ├── index.html   # Main page template
 ├── tests/
-│   ├── test_bugfixes.py     # Regression tests (python tests/test_bugfixes.py)
-│   └── test_e2e_smoke.py    # End-to-end smoke test
+│   ├── test_bugfixes.py       # Regression tests (30 cases)
+│   ├── test_v13_bugs.py       # v1.3 audit tests (8 cases)
+│   ├── test_e2e_smoke.py      # End-to-end smoke test (starts a real server)
+│   └── test_debug_reloader.py # Verifies the scheduler starts only once under --debug
 ├── main.py                  # Entry point
 ├── config.yaml              # Configuration file
 ├── requirements.txt         # Python dependencies
@@ -148,11 +150,13 @@ fetch:
   retries: 3                   # Retries for network errors
   timeout: 15                  # Per-request timeout (seconds)
   max_entries: 50              # Max entries processed per fetch
+  max_bytes: 8388608           # Max feed response size in bytes (8 MB); larger is truncated
 
 fulltext:
   enabled: true
   max_per_fetch: 5             # Max articles fetched in full per run (0 disables)
   timeout: 10
+  max_bytes: 2097152           # Max article page size in bytes (2 MB)
 
 security:
   allow_private_networks: false  # Keep false to block SSRF to internal addresses

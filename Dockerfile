@@ -12,7 +12,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # 数据库放在被挂载的数据卷里（docker-compose 把 ./data 挂到 /app/data）
-RUN mkdir -p /app/data
+RUN mkdir -p /app/data && \
+    python -c "import app, app.config, app.fetcher, app.fulltext, app.scheduler, app.search, app.schema, app.security, app.urlsafety, app.web.routes"
 
 EXPOSE 5000
 

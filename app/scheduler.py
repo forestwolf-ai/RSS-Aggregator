@@ -76,11 +76,30 @@ def schedule_all(app, notify=True):
 
 
 def scheduler_allowed(app):
-    """是否应该在本进程运行调度器。"""
+    """是否应该在本进程运行调度器。
+
+    多进程部署（gunicorn -w N）时每个 worker 都会导入本模块，若各自启动一个
+    调度器就会重复抓取、重复发信。这里提供逐进程开关：
+    除 web worker 外的那个进程设 `RSS_AGGREGATOR_SCHEDULER=off` 即可。
+    """
+    override = os.environ.get("RSS_AGGREGATOR_SCHEDULER", "").strip().lower()
+    if override in {"0", "off", "false", "no", "disable", "disabled"}:
+        logger.info("环境变量 RSS_AGGREGATOR_SCHEDULER=%s，本进程不启动调度器", override)
+        return False
+
     if not app.config.get("SCHEDULER_ENABLED", True):
         return False
-    # Flask 调试重载器会 fork 出父/子两个进程，只在真正干活的子进程里跑
-    if app.config.get("SERVER_DEBUG") and os.environ.get("WERKZEUG_RUN_MAIN") != "true":
+
+    # 调试重载器会派生父/子两个进程，只在真正干活的子进程里跑。
+    # 注意 `flask run --debug` 时 app.debug 还没生效（引导逻辑在导入期执行），
+    # 但 --debug 已经把 FLASK_DEBUG 写进环境变量，所以要一并判断。
+    debug = bool(
+        app.debug
+        or app.config.get("DEBUG")
+        or app.config.get("SERVER_DEBUG")
+        or os.environ.get("FLASK_DEBUG", "").strip().lower() in {"1", "true"}
+    )
+    if debug and os.environ.get("WERKZEUG_RUN_MAIN") != "true":
         return False
     return True
 

@@ -22,12 +22,14 @@ fetch:
   retries: 3               # 网络类错误的重试次数
   timeout: 15              # 单次请求超时（秒）
   max_entries: 50          # 每次抓取最多处理多少条
+  max_bytes: 8388608       # 单个 feed 响应体上限（字节，默认 8 MB），超出即截断
   user_agent: "RSSAggregator/1.0 (+https://github.com/forestwolf-ai/RSS-Aggregator)"
 
 fulltext:
   enabled: true
   max_per_fetch: 5         # 每次抓取最多为几篇文章抓正文（0 = 关闭，避免请求被拖死）
   timeout: 10
+  max_bytes: 2097152       # 单篇文章页响应体上限（字节，默认 2 MB）
 
 security:
   # 是否允许抓取内网/回环地址。默认 false（防 SSRF）；只订阅内网源时再打开

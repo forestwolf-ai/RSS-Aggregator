@@ -6,9 +6,11 @@
 2. 去重查询改为一次批量 SELECT。原来每个条目查一次，50 条就是 50 次查询。
 3. 全文抽取不再是「每个没有 content 的条目都同步抓一次网页」（最多 50 × 10s），
    改为受 fulltext.enabled / max_per_fetch / timeout 控制，避免请求线程被拖死。
-4. 抓取前做 URL 安全校验（SSRF），默认拒绝内网/回环/链路本地地址。
+4. 抓取前做 URL 安全校验（SSRF），默认拒绝内网/回环/链路本地地址；
+   并且**逐跳校验重定向**、限制响应体大小（见 app/urlsafety.safe_get）——
+   只校验首个地址时，一个公网 feed 用 302 就能把服务端引到内网。
 5. 并发写入撞上唯一约束时逐条降级重试，而不是让整批抓取失败。
-6. 通知邮件在事务提交之后发送，且失败不影响抓取结果。
+6. 通知邮件在事务提交之后发送，只列出真正入库的文章，且失败不影响抓取结果。
 """
 import logging
 import time
@@ -22,7 +24,7 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 from app import db
 from app.fulltext import extract_full_text
 from app.models import Article, Source, utcnow
-from app.urlsafety import is_safe_url
+from app.urlsafety import DEFAULT_MAX_BYTES, is_safe_url, safe_get
 
 logger = logging.getLogger(__name__)
 
@@ -113,38 +115,38 @@ def _build_articles(source, feed):
 
 
 def _persist(articles):
-    """批量入库；撞上唯一约束时降级为逐条 savepoint 重试。"""
+    """批量入库；撞上唯一约束时降级为逐条 savepoint 重试。返回真正入库的文章。"""
     if not articles:
-        return 0
+        return []
 
     for article in articles:
         db.session.add(article)
     try:
         db.session.commit()
-        return len(articles)
+        return list(articles)
     except IntegrityError:
         db.session.rollback()
         logger.warning("检测到并发写入造成的重复条目，改为逐条入库")
 
-    saved = 0
+    saved = []
     for article in articles:
         try:
             with db.session.begin_nested():
                 db.session.add(article)
-            saved += 1
+            saved.append(article)
         except IntegrityError:
             logger.debug("跳过重复文章: %s", article.link)
     db.session.commit()
     return saved
 
 
-def _notify(source, articles, saved):
-    """发送通知邮件；任何异常都不影响抓取结果。"""
+def _notify(source, articles):
+    """发送通知邮件；只列出真正入库的文章，任何异常都不影响抓取结果。"""
     try:
         from app.notifications import send_email
 
-        subject = f"RSS Aggregator: {source.name} 更新了 {saved} 篇文章"
-        body = "\n".join(article.title or "" for article in articles) or f"{saved} new articles"
+        subject = f"RSS Aggregator: {source.name} 更新了 {len(articles)} 篇文章"
+        body = "\n".join(article.title or "" for article in articles)
         send_email(subject, body)
     except Exception as exc:  # noqa: BLE001 - 通知失败不能影响抓取
         logger.error("发送通知邮件失败: %s", exc)
@@ -168,16 +170,26 @@ def fetch_source(source_id, notify=False):
 
     retries = max(1, int(_config("FETCH_RETRIES", 3)))
     timeout = int(_config("FETCH_TIMEOUT", 15))
+    max_bytes = int(_config("FETCH_MAX_BYTES", DEFAULT_MAX_BYTES))
     headers = {"User-Agent": _config("FETCH_USER_AGENT", "RSSAggregator/1.0")}
     last_error = "unknown error"
 
     for attempt in range(1, retries + 1):
         try:
-            response = requests.get(source.url, timeout=timeout, headers=headers)
-            if response.status_code != 200:
-                raise requests.HTTPError(f"HTTP {response.status_code}", response=response)
+            result = safe_get(
+                source.url,
+                timeout=timeout,
+                headers=headers,
+                max_bytes=max_bytes,
+                allow_private=allow_private,
+            )
+            if result.status_code != 200:
+                message = f"HTTP {result.status_code}"
+                if result.status_code >= 500 or result.status_code == 429:
+                    raise requests.HTTPError(message)  # 服务端/限流问题，值得重试
+                raise ValueError(message)  # 4xx 重试没有意义
 
-            feed = feedparser.parse(response.content)
+            feed = feedparser.parse(result.content)
             if feed.bozo:
                 logger.warning("Feed 解析告警 %s: %s", source.url, feed.get("bozo_exception"))
                 if not feed.entries:
@@ -201,11 +213,11 @@ def fetch_source(source_id, notify=False):
             continue
 
         if notify and saved:
-            _notify(source, created, saved)
+            _notify(source, saved)
         logger.info(
             "从 %s 抓取到 %d 条新文章（%d 条因全文抽取配额未抓正文）",
-            source.name, saved, skipped,
+            source.name, len(saved), skipped,
         )
-        return True, f"Fetched {saved} new entries"
+        return True, f"Fetched {len(saved)} new entries"
 
     return False, last_error

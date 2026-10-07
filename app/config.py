@@ -145,11 +145,13 @@ class ConfigLoader:
         flask_config["FULLTEXT_ENABLED"] = bool(fulltext.get("enabled", True))
         flask_config["FULLTEXT_MAX_PER_FETCH"] = int(fulltext.get("max_per_fetch", 5))
         flask_config["FULLTEXT_TIMEOUT"] = int(fulltext.get("timeout", 10))
+        flask_config["FULLTEXT_MAX_BYTES"] = int(fulltext.get("max_bytes", 2 * 1024 * 1024))
 
         fetch = section("fetch")
         flask_config["FETCH_RETRIES"] = max(1, int(fetch.get("retries", 3)))
         flask_config["FETCH_TIMEOUT"] = int(fetch.get("timeout", 15))
         flask_config["FETCH_MAX_ENTRIES"] = int(fetch.get("max_entries", 50))
+        flask_config["FETCH_MAX_BYTES"] = int(fetch.get("max_bytes", 8 * 1024 * 1024))
         flask_config["FETCH_USER_AGENT"] = fetch.get("user_agent", "RSSAggregator/1.0 (+feed reader)")
 
         log_section = section("logging")
