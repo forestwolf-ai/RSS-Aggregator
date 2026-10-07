@@ -109,8 +109,8 @@ rss_aggregator/
 
 1. **克隆仓库**
    ```bash
-   git clone https://github.com/yourusername/rss_aggregator.git
-   cd rss_aggregator
+   git clone https://github.com/forestwolf-ai/RSS-Aggregator.git
+   cd RSS-Aggregator
    ```
 
 2. **安装依赖**
