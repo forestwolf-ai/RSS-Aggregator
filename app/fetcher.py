@@ -68,9 +68,15 @@ def _existing_links(links):
 
 
 def _build_articles(source, feed):
-    """把 feed 条目转成待入库的 Article，返回 (新增列表, 跳过全文抽取数)。"""
-    max_entries = max(0, int(_config("FETCH_MAX_ENTRIES", 50)))
-    entries = list(feed.entries[:max_entries]) if max_entries else []
+    """把 feed 条目转成待入库的 Article，返回 (新增列表, 跳过全文抽取数)。
+
+    注意 `fetch.max_entries` 限制的是**本次新增条数**，不是「只看前 N 条」：
+    原来直接切 `feed.entries[:N]`，一个源一次发布 200 条时，
+    第 51 条之后的内容会被静默丢弃、再也不会入库。
+    现在遍历全部条目，达到新增上限就停下，剩下的留给下次抓取补齐。
+    """
+    limit = max(0, int(_config("FETCH_MAX_ENTRIES", 50)))
+    entries = list(feed.entries) if limit else []
 
     existing = _existing_links([link for link in (_entry_link(e) for e in entries) if link])
 
@@ -118,6 +124,12 @@ def _build_articles(source, feed):
                 source_id=source.id,
             )
         )
+        if limit and len(created) >= limit:
+            logger.info(
+                "source=%s 本次已达新增上限 %d 条，其余条目留待下次抓取",
+                source.id, limit,
+            )
+            break
     return created, skipped
 
 
@@ -207,6 +219,11 @@ def fetch_source(source_id, notify=False):
 
             source.last_fetched = utcnow()
             db.session.commit()
+
+            # 保留策略：按配置裁剪过期/超量的文章（未配置时不做任何事）
+            from app.retention import apply_retention
+
+            removed = apply_retention(source.id)
         except Exception as exc:  # noqa: BLE001 - 统一走重试/失败分支
             db.session.rollback()
             last_error = str(exc) or exc.__class__.__name__
@@ -222,8 +239,8 @@ def fetch_source(source_id, notify=False):
         if notify and saved:
             _notify(source, saved)
         logger.info(
-            "从 %s 抓取到 %d 条新文章（%d 条因全文抽取配额未抓正文）",
-            source.name, len(saved), skipped,
+            "从 %s 抓取到 %d 条新文章（%d 条因全文抽取配额未抓正文，保留策略清理 %d 条）",
+            source.name, len(saved), skipped, removed,
         )
         return True, f"Fetched {len(saved)} new entries"
 

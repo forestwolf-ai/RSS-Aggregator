@@ -6,8 +6,19 @@
     <title>{{ app_name }}</title>
 </head>
 <body>
-    <h1>{{ app_name }}</h1>
-    <a href="{{ lang_url('en') }}">English</a> | <a href="{{ lang_url('zh') }}">中文</a>
+    <header>
+        <h1>{{ app_name }}</h1>
+        <p>
+            <a href="{{ lang_url('en') }}">English</a> | <a href="{{ lang_url('zh') }}">中文</a>
+            &nbsp;·&nbsp; <strong>{{ _('unread_total', count=total_unread) }}</strong>
+            {% if auth_enabled %}
+                &nbsp;·&nbsp; <small>{{ _('logged_in_as', name=current_user) }}</small>
+                <form action="{{ url_for('web.logout') }}" method="post" style="display:inline">
+                    <button type="submit">{{ _('logout') }}</button>
+                </form>
+            {% endif %}
+        </p>
+    </header>
 
     {% with messages = get_flashed_messages() %}
       {% if messages %}
@@ -53,18 +64,38 @@
     </div>
 
     <h2>{{ _('sources') }}</h2>
-    <ul>
+    <ul class="sources">
     {% for source in sources %}
         <li>
-            <strong>{{ source.name }}</strong> ({{ source.category }}) - {{ source.url }}
-            {% if source.last_fetched %}<small>{{ _('last_fetched') }}: {{ source.last_fetched }}</small>{% endif %}
+            <strong>{{ source.name }}</strong>
+            ({{ source.category }}) - {{ source.url }}
+            {% if not source.enabled %}<em>[{{ _('paused') }}]</em>{% endif %}
+            <small>{{ _('unread_total', count=unread_counts.get(source.id, 0)) }}</small>
+            <small>{{ _('last_fetched') }}:
+                {{ source.last_fetched if source.last_fetched else _('never_fetched') }}
+            </small>
+
             <form action="{{ url_for('web.refresh_source', source_id=source.id) }}" method="post" style="display:inline">
                 <button type="submit">{{ _('refresh') }}</button>
+            </form>
+            <form action="{{ url_for('web.toggle_source', source_id=source.id) }}" method="post" style="display:inline">
+                <button type="submit">{{ _('resume') if not source.enabled else _('pause') }}</button>
             </form>
             <form action="{{ url_for('web.delete_source', source_id=source.id) }}" method="post" style="display:inline"
                   onsubmit="return confirm('{{ _('delete_confirm') }}')">
                 <button type="submit">{{ _('delete_source') }}</button>
             </form>
+
+            <!-- 编辑：名称 / 分类 / 更新间隔 -->
+            <details>
+                <summary>{{ _('edit_source') }}</summary>
+                <form action="{{ url_for('web.edit_source', source_id=source.id) }}" method="post">
+                    <label>{{ _('name') }}<input type="text" name="name" value="{{ source.name }}"></label>
+                    <label>{{ _('category') }}<input type="text" name="category" value="{{ source.category }}"></label>
+                    <label>{{ _('interval') }}<input type="number" name="interval" min="5" value="{{ source.interval }}"></label>
+                    <button type="submit">{{ _('save') }}</button>
+                </form>
+            </details>
         </li>
     {% endfor %}
     </ul>
@@ -106,5 +137,10 @@
         {% endif %}
     </div>
     {% endif %}
+
+    <hr>
+    <footer>
+        <small>{{ app_name }} {{ app_version }}</small>
+    </footer>
 </body>
 </html>

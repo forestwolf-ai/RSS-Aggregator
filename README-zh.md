@@ -2,6 +2,8 @@
 
 [English](README.md) | [中文](README-zh.md)
 
+**当前版本：2.0.1** &nbsp;·&nbsp; `/healthz` 也会返回版本号。
+
 一个功能丰富、可自托管的 RSS 订阅聚合器。支持定时抓取、OPML 导入导出、全文提取、关键词搜索过滤、邮件通知，并提供中英文双语 Web 界面。适合个人或团队用于信息聚合、内容监控和阅读管理。
 
 ---
@@ -10,14 +12,16 @@
 
 ### 核心功能
 
-- **RSS 源管理**：添加、删除、编辑 RSS 源，支持分类（如“科技”“新闻”“博客”）。
-- **定时抓取**：基于 APScheduler，每个源可独立设置更新间隔（最低 5 分钟）。
-- **数据持久化**：使用 SQLite（默认）或 PostgreSQL，通过 SQLAlchemy 实现。
-- **Web 界面**：基于 Flask 的响应式界面，支持中英文切换。
+- **RSS 源管理**：添加、删除、编辑、暂停 RSS 源，支持分类（如“科技”“新闻”“博客”）。
+- **定时抓取**：基于 APScheduler，每个源可独立设置更新间隔（最低 5 分钟）；已暂停的源不会抓取。
+- **登录保护**：单用户登录，口令只存哈希；会话 Cookie 加固（`HttpOnly`、`SameSite=Lax`），连续失败会临时锁定。未配置口令时不启用。
+- **数据持久化**：使用 SQLite（默认）或 PostgreSQL，通过 SQLAlchemy 实现；老库升级会就地补列补索引。
+- **Web 界面**：基于 Flask 的响应式界面，支持中英文切换，并显示全局与每个源的未读数。
 - **文章阅读**：展示标题、摘要、发布时间，点击跳转原文。
 
 ### 高级功能
 
+- **文章保留策略**：按每源条数或天数上限自动裁剪，长期运行不会无限膨胀。
 - **OPML 导入/导出**：一键迁移订阅源，兼容主流 RSS 阅读器。
 - **全文提取**：对只提供摘要的源，尝试自动抓取网页正文（基于 BeautifulSoup）。
 - **关键词过滤与全文搜索**：支持按标题、摘要、正文搜索，可结合源分类和未读状态过滤。
@@ -50,11 +54,14 @@ rss_aggregator/
 │   ├── __init__.py          # 应用初始化
 │   ├── config.py            # 配置加载器
 │   ├── models.py            # ORM 模型（Source、Article）
-│   ├── schema.py            # 建表并补齐索引
+│   ├── schema.py            # 建表、为老库补列补索引
+│   ├── version.py           # 版本号唯一来源
 │   ├── fetcher.py           # RSS 抓取与重试逻辑
 │   ├── scheduler.py         # 后台调度器
 │   ├── urlsafety.py         # 出站 URL 安全校验（防 SSRF）
 │   ├── security.py          # 跨站请求来源校验
+│   ├── auth.py              # 单用户登录、会话与失败锁定
+│   ├── retention.py         # 文章保留策略（每源条数 / 天数）
 │   ├── i18n.py              # 中英文翻译
 │   ├── opml.py              # OPML 导入导出
 │   ├── fulltext.py          # 全文提取
@@ -65,10 +72,12 @@ rss_aggregator/
 │       ├── routes.py        # 路由与视图
 │       └── templates/
 │           ├── index.html   # 主页面模板
+│           └── login.html   # 登录页模板
 ├── tests/
 │   ├── test_bugfixes.py       # 回归测试（30 例）
 │   ├── test_v13_bugs.py       # v1.3 审查用例（8 例）
 │   ├── test_v14_bugs.py       # v1.4 审查用例 + 仓库布局检查（7 例）
+│   ├── test_v2_bugs.py        # v2.0.1 功能与修复用例（16 例）
 │   ├── test_e2e_smoke.py      # 端到端冒烟测试（会真的启动服务）
 │   └── test_debug_reloader.py # 验证 --debug 下调度器只启动一次
 ├── main.py                  # 程序入口
@@ -82,8 +91,9 @@ rss_aggregator/
 └── README.md                # 本文件（英文版）
 ```
 
-> **安全提示**：本项目没有登录鉴权。请部署在可信内网，或放在带鉴权的反向代理之后，
-> 不要直接暴露到公网。
+> **安全提示**：自 2.0.1 起内置可选的单用户登录。若要在自有网络之外访问，
+> 请先配置 `auth.password_hash`（或环境变量 `RSS_AGGREGATOR_PASSWORD`）；
+> 未配置口令时，任何能访问到该端口的人都能直接使用界面。
 
 ---
 
@@ -147,11 +157,23 @@ server:
   port: 5000
   debug: false
 
+auth:
+  enabled: true                # 未配置口令时自动失效
+  username: "admin"
+  # password_hash: "..."       # 生成：python -m app.auth <你的口令>
+  # password: "明文口令"        # 仅为方便试用，推荐用哈希
+  session_days: 14
+
+retention:
+  max_articles_per_source: 0   # 每个源最多保留多少条（0 = 不限）
+  max_age_days: 0              # 只保留最近多少天（0 = 不限）
+
 fetch:
   retries: 3                   # 网络类错误的重试次数
   timeout: 15                  # 单次请求超时（秒）
-  max_entries: 50              # 每次抓取最多处理多少条
+  max_entries: 50              # 每次抓取最多「新增」多少条，其余下次补齐
   max_bytes: 8388608           # feed 响应体上限（字节，8 MB），超出即截断
+  initial_async: true          # 添加源后立即返回，首次抓取转后台
 
 fulltext:
   enabled: true
@@ -162,6 +184,8 @@ fulltext:
 security:
   allow_private_networks: false  # 保持 false 可阻止抓取内网地址（防 SSRF）
   csrf_origin_check: true        # 拒绝跨站 POST（Origin/Referer 校验）
+  session_cookie_secure: false   # 走 HTTPS 时设为 true
+  max_content_bytes: 8388608     # 超过此大小的请求体返回 413
 
 logging:
   level: "INFO"

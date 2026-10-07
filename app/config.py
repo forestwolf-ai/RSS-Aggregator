@@ -195,6 +195,24 @@ class ConfigLoader:
         )
         flask_config["SECRET_KEY"] = app_section.get("secret_key")
 
+        auth = section("auth")
+        flask_config["AUTH_ENABLED"] = as_bool("auth", "enabled", auth.get("enabled"), True)
+        flask_config["AUTH_USERNAME"] = as_str("auth", "username", auth.get("username"), "admin")
+        flask_config["AUTH_PASSWORD_HASH"] = auth.get("password_hash")
+        flask_config["AUTH_PASSWORD"] = auth.get("password")
+        flask_config["AUTH_SESSION_DAYS"] = as_int(
+            "auth", "session_days", auth.get("session_days"), 14, minimum=1
+        )
+
+        retention = section("retention")
+        flask_config["RETENTION_MAX_ARTICLES_PER_SOURCE"] = as_int(
+            "retention", "max_articles_per_source",
+            retention.get("max_articles_per_source"), 0, minimum=0,
+        )
+        flask_config["RETENTION_MAX_AGE_DAYS"] = as_int(
+            "retention", "max_age_days", retention.get("max_age_days"), 0, minimum=0
+        )
+
         email = section("notifications").get("email")
         email = email if isinstance(email, dict) else {}
         flask_config["EMAIL_ENABLED"] = as_bool(
@@ -230,6 +248,13 @@ class ConfigLoader:
         flask_config["SECURITY_CSRF_ORIGIN_CHECK"] = as_bool(
             "security", "csrf_origin_check", security.get("csrf_origin_check"), True
         )
+        flask_config["SECURITY_SESSION_COOKIE_SECURE"] = as_bool(
+            "security", "session_cookie_secure", security.get("session_cookie_secure"), False
+        )
+        flask_config["SECURITY_MAX_CONTENT_BYTES"] = as_int(
+            "security", "max_content_bytes", security.get("max_content_bytes"),
+            8 * 1024 * 1024, minimum=1024,
+        )
 
         fulltext = section("fulltext")
         flask_config["FULLTEXT_ENABLED"] = as_bool(
@@ -257,6 +282,9 @@ class ConfigLoader:
         )
         flask_config["FETCH_MAX_BYTES"] = as_int(
             "fetch", "max_bytes", fetch.get("max_bytes"), 8 * 1024 * 1024, minimum=1
+        )
+        flask_config["FETCH_INITIAL_ASYNC"] = as_bool(
+            "fetch", "initial_async", fetch.get("initial_async"), True
         )
         flask_config["FETCH_USER_AGENT"] = as_str(
             "fetch", "user_agent", fetch.get("user_agent"),

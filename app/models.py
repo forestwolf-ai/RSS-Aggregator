@@ -1,10 +1,11 @@
 """ORM 模型。
 
-修复要点：
-1. `Article.link` 增加唯一索引。原来只靠「先查再插」去重，手动刷新（请求线程）
-   与定时任务（调度线程）并发时会重复入库。
-2. 增加排序/过滤用索引（published、source_id），避免翻页时全表排序。
+要点：
+1. `Article.link` 唯一索引：只靠「先查再插」去重，手动刷新（请求线程）与
+   定时任务（调度线程）并发时会重复入库。
+2. 排序/过滤索引（published、source_id、read+published），避免翻页与未读筛选全表扫描。
 3. 时间统一用 naive UTC，避免 aware/naive 混用，也避开 3.12 起废弃的 utcnow()。
+4. v2.0.1 新增 `Source.enabled`：可以暂停某个源而不删除它（暂停后不再调度）。
 """
 from datetime import datetime, timezone
 
@@ -22,6 +23,7 @@ class Source(db.Model):
     url = db.Column(db.String(500), unique=True, nullable=False)
     category = db.Column(db.String(100), default="General")
     interval = db.Column(db.Integer, default=30)  # minutes
+    enabled = db.Column(db.Boolean, default=True, nullable=False)
     last_fetched = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=utcnow)
     articles = db.relationship(
@@ -37,6 +39,7 @@ class Article(db.Model):
         db.Index("uq_article_link", "link", unique=True),
         db.Index("ix_article_published", "published"),
         db.Index("ix_article_source_id", "source_id"),
+        db.Index("ix_article_read_published", "read", "published"),
     )
 
     id = db.Column(db.Integer, primary_key=True)

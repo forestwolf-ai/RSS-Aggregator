@@ -8,6 +8,114 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2.0.1] - 2026-10-07
+
+第四轮审查 + 功能版本：修复 **5 项缺陷**、新增 **5 项功能**，并把版本号收敛到单一来源。
+Fourth audit and feature release: **5 bugs fixed**, **5 features added**, and the version number now has a single source of truth.
+
+> 你要求发到 v2.0.1。主版本升到 2 是因为「登录鉴权 + 首次抓取改为后台」属于行为变更，
+> 详见下方 2.0.0 小节。
+> You asked for v2.0.1. The major version moved to 2 because authentication and the asynchronous
+> first fetch change behaviour — see the 2.0.0 section below.
+
+### 新增功能 / Added
+
+- **登录鉴权（单用户）**：`config.yaml` 配置 `auth.password_hash`（生成方式
+  `python -m app.auth <password>`），或用环境变量 `RSS_AGGREGATOR_PASSWORD`；
+  未配置口令时鉴权自动关闭并在启动日志里给出醒目警告，不会把现有部署锁在门外。
+  同一来源连续失败 5 次会锁定 5 分钟，抵挡在线爆破。
+- **Single-user login**: set `auth.password_hash` in `config.yaml` (generate it with `python -m app.auth <password>`) or provide `RSS_AGGREGATOR_PASSWORD`. When no password is configured, authentication stays off and a prominent warning is logged, so existing deployments are not locked out. Five consecutive failures from one source trigger a five-minute lockout.
+
+- **订阅源编辑与暂停**：可修改名称 / 分类 / 更新间隔，也可暂停某个源
+  （暂停后不再调度，但保留已抓到的文章）。README 与翻译表里一直写着 `edit`，
+  但此前没有对应实现。
+- **Edit and pause feeds**: change name, category and interval, or pause a feed (pausing stops scheduling but keeps the articles already fetched). The README and the translation table had advertised `edit` for a long time without an implementation.
+
+- **未读统计**：首页显示全局未读总数与每个源的未读数，未读列表用上了新的复合索引。
+- **Unread counters**: the index shows a global unread total and a per-feed unread count, backed by a new composite index.
+
+- **文章保留策略**：`retention.max_articles_per_source` / `retention.max_age_days`
+  在每次抓取后自动裁剪，避免自托管实例的数据库无限膨胀。
+- **Article retention**: `retention.max_articles_per_source` and `retention.max_age_days` trim articles after each fetch so a self-hosted instance does not grow without bound.
+
+- **首次抓取改为后台执行**：`fetch.initial_async`（默认开启）。原来添加源会在请求里
+  同步抓取，最坏要等「网络重试 × 超时 + 全文抽取配额」几十秒。
+- **Asynchronous first fetch**: `fetch.initial_async` (on by default). Adding a feed used to fetch synchronously inside the request, worst case tens of seconds of retries plus full-text extraction.
+
+### 修复 / Fixed
+
+- **`fetch.max_entries` 会永久丢文章**：原来直接切 `feed.entries[:N]`，一个源一次发布 200 条时，
+  第 51 条之后的内容被静默丢弃、再也不会入库。现在遍历全部条目，上限只约束**本次新增条数**，
+  剩下的留给后续抓取补齐。
+- **`fetch.max_entries` permanently dropped articles**: the code sliced `feed.entries[:N]`, so when a feed published 200 items the ones after the 50th were silently discarded forever. It now walks every entry and the cap only limits how many **new** articles are stored per run; the rest are picked up on later fetches.
+
+- **老数据库升级会直接报错**：`db.create_all()` 不会给已有表补列，新增 `source.enabled` 后
+  老库一启动就因缺列失败。`app/schema.py` 现在会幂等补列（`ALTER TABLE ... ADD COLUMN`）
+  与补索引。
+- **Upgrading an existing database failed outright**: `db.create_all()` never adds columns to existing tables, so the new `source.enabled` column would break every old database on start. `app/schema.py` now backfills missing columns (`ALTER TABLE ... ADD COLUMN`) and indexes idempotently.
+
+- **会话 Cookie 与请求体缺少加固**：`SESSION_COOKIE_SAMESITE = None`、`MAX_CONTENT_LENGTH = None`
+  在 Flask 默认配置里**已经存在**，用 `setdefault` 根本改不动——现在显式设为
+  `Lax` / `HttpOnly`，并给请求体加上限（默认 8 MB），超限返回 413。
+- **Session cookies and request bodies were not hardened**: `SESSION_COOKIE_SAMESITE = None` and `MAX_CONTENT_LENGTH = None` already exist in Flask's default config, so `setdefault` silently did nothing — they are now assigned explicitly (`Lax`, `HttpOnly`), and request bodies are capped (8 MB by default) with a 413 response.
+
+- **模板里的带参翻译会 500**：`_('unread_total', count=3)` 这类调用要求翻译函数接受关键字参数，
+  原来只接受一个 `key`，一渲染就抛 `TypeError`。
+- **Parameterised translations crashed the page**: calls like `_('unread_total', count=3)` need the translator to accept keyword arguments; the old lambda accepted only `key` and raised `TypeError` while rendering.
+
+- **应用工厂在上下文之外读配置**：判断「是否启用鉴权」时用了 `current_app`，
+  在 `create_app()` 阶段会抛 `RuntimeError: Working outside of application context`。
+- **The app factory read config outside a context**: the authentication check used `current_app`, which raises `RuntimeError: Working outside of application context` during `create_app()`.
+
+- **调度器时区配置从未生效**：`app.timezone` 一直被读进配置却没人使用，现在真正传给
+  `BackgroundScheduler`（写错时回退系统时区并告警）。
+- **The configured scheduler timezone was never applied**: `app.timezone` was loaded but unused; it is now passed to `BackgroundScheduler` (falling back to the system timezone with a warning if invalid).
+
+- **打包遗漏（第三次）**：补回 `.dockerignore`、`.gitignore` 运行时项，删除 `app/.dockerfile`。
+- **Packaging gaps, third time**: restored `.dockerignore` and the `.gitignore` runtime rules, removed `app/.dockerfile`.
+
+### 版本号 / Version
+
+- 新增 `app/version.py` 作为版本号唯一来源，`/healthz` 与页面页脚都会显示它；
+  测试会校验它与 `CHANGELOG.md`、两份 README 一致。
+- `app/version.py` is now the single source of truth; `/healthz` and the page footer expose it, and a test asserts it matches `CHANGELOG.md` and both READMEs.
+
+### 测试 / Tests
+
+| 套件 / Suite | 结果 / Result |
+|---|---|
+| `tests/test_bugfixes.py`（30 例 / cases） | 30 / 30 |
+| `tests/test_v13_bugs.py`（8 例 / cases） | 8 / 8 |
+| `tests/test_v14_bugs.py`（7 例 / cases） | 7 / 7 |
+| `tests/test_v2_bugs.py`（本轮新增 16 例 / 16 new cases） | 16 / 16 |
+| `tests/test_e2e_smoke.py`（端到端 / end-to-end） | 通过 / passed |
+| `tests/test_debug_reloader.py`（进程级 / process-level） | 调度器启动 1 次 / 1 scheduler |
+
+---
+
+## [2.0.0] - 2026-10-07
+
+**破坏性变更汇总（自 1.x 起）**。本次没有单独发布 2.0.0，2.0.1 直接包含下列全部变更，
+这里列出是为了说明主版本号为何升到 2。
+**Summary of breaking changes since 1.x.** No 2.0.0 release was published separately; 2.0.1 includes everything below. This section exists to explain the major version bump.
+
+- **登录鉴权**：一旦配置口令，所有页面与接口都要求登录（`/healthz` 保持公开）。
+- **Authentication**: once a password is configured, every page and endpoint requires a login (`/healthz` stays public).
+- **首次抓取异步化**：`POST /add_source` 立即返回，抓取在后台完成，页面上的文章会稍后出现。
+- **Asynchronous first fetch**: `POST /add_source` returns immediately; the fetch happens in the background and articles appear shortly after.
+- **删除源 / 刷新源 / 标记已读未读只接受 POST**（1.3 起），跨站 POST 返回 403。
+- **State-changing endpoints only accept POST** (since 1.3) and cross-site POSTs return 403.
+- **数据库默认路径**：`sqlite:///rss.db` → `sqlite:///data/rss.db`（容器内即挂载卷 `/app/data`）。
+- **Default database path**: `sqlite:///rss.db` → `sqlite:///data/rss.db` (i.e. `/app/data` in the container).
+- **默认拒绝内网抓取**：需要内网源时设置 `security.allow_private_networks: true`。
+- **Internal addresses are rejected by default**: opt in with `security.allow_private_networks: true`.
+- **全文抽取默认每次最多 5 篇**；`fetch.max_entries` 语义改为「每次新增上限」。
+- **Full-text extraction defaults to 5 articles per run**, and `fetch.max_entries` now means "max new articles per run".
+- **配置项类型写错会直接启动失败并指明位置**（`ConfigError`）。
+- **A wrongly typed config value now fails startup** with a `ConfigError` naming the offending key.
+
+---
+
 ## [1.5.0] - 2026-10-07
 
 第三轮审查版本：修复 **6 项缺陷**（含一处可稳定触发 500 的输入处理问题），并补回 v1.4 上传时再次丢失的文件。

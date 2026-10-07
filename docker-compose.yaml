@@ -8,6 +8,12 @@ services:
     environment:
       # 相对 sqlite 路径已锚定到项目根目录（容器内 /app），因此数据库就落在下面的数据卷里
       TZ: Asia/Shanghai
+      # 登录口令（推荐：用环境变量而不是把它写进挂载的 config.yaml）
+      # RSS_AGGREGATOR_PASSWORD: "换成你的口令"
+      # 会话密钥（不设置则每次启动随机生成，重启后需要重新登录）
+      # SECRET_KEY: "换成随机字符串"
+      # 多副本部署时，只有需要跑调度器的那个副本保留这一行以外，其余副本设 off
+      # RSS_AGGREGATOR_SCHEDULER: "off"
     volumes:
       - ./data:/app/data
       - ./config.yaml:/app/config.yaml:ro

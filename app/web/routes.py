@@ -13,6 +13,7 @@
 """
 import logging
 import re
+import threading
 
 from flask import (
     Blueprint,
@@ -23,10 +24,19 @@ from flask import (
     request,
     url_for,
 )
-from sqlalchemy import text
+from sqlalchemy import func, or_, text
 from sqlalchemy.exc import IntegrityError
 
 from app import db
+from app.auth import (
+    auth_enabled,
+    client_key,
+    current_user,
+    login_user,
+    logout_user,
+    throttle,
+    verify_credentials,
+)
 from app.fetcher import fetch_source
 from app.i18n import translate
 from app.models import Article, Source
@@ -73,18 +83,50 @@ def _lang_url(language):
     return url_for(request.endpoint, **args)
 
 
+def _translator(lang):
+    """模板里用的翻译函数，支持占位符：_('unread_total', count=3)。"""
+
+    def _(key, **kwargs):
+        text = translate(key, lang)
+        return text.format(**kwargs) if kwargs else text
+
+    return _
+
+
 def _context(**extra):
     lang = _language()
+    counts, total_unread = _unread_counts()
     context = {
         "lang": lang,
-        "_": lambda key: translate(key, lang),
+        "_": _translator(lang),
         "page_url": _page_url,
         "lang_url": _lang_url,
         # 原来模板只取 i18n 字典，config.yaml 里的 app.name 配了也不会显示
         "app_name": current_app.config.get("APP_NAME") or translate("app_name", lang),
+        "app_version": current_app.config.get("APP_VERSION", ""),
+        "unread_counts": counts,
+        "total_unread": total_unread,
+        "auth_enabled": auth_enabled(),
+        "current_user": current_user(),
     }
     context.update(extra)
     return context
+
+
+def _unread_counts():
+    """每个源的未读数与总未读数（read 为 NULL 也算未读）。"""
+    try:
+        rows = (
+            db.session.query(Article.source_id, func.count(Article.id))
+            .filter(or_(Article.read.is_(False), Article.read.is_(None)))
+            .group_by(Article.source_id)
+            .all()
+        )
+    except Exception as exc:  # noqa: BLE001 - 统计失败不应让页面 500
+        logging.getLogger(__name__).warning("统计未读数失败: %s", exc)
+        return {}, 0
+    counts = {source_id: count for source_id, count in rows}
+    return counts, sum(counts.values())
 
 
 def _parse_interval(raw, default=DEFAULT_INTERVAL_MINUTES):
@@ -162,6 +204,63 @@ def _allow_private():
 
 
 # --------------------------------------------------------------------------- #
+# 登录 / 登出
+# --------------------------------------------------------------------------- #
+def _login_context(**extra):
+    lang = _language()
+    context = {
+        "lang": lang,
+        "_": _translator(lang),
+        "app_name": current_app.config.get("APP_NAME") or translate("app_name", lang),
+        "app_version": current_app.config.get("APP_VERSION", ""),
+    }
+    context.update(extra)
+    return context
+
+
+@web_bp.route("/login", methods=["GET", "POST"])
+def login():
+    if not auth_enabled():
+        return redirect(url_for("web.index"))
+    if current_user():
+        return redirect(_local_redirect(request.args.get("next"), url_for("web.index")))
+
+    error = None
+    if request.method == "POST":
+        key = client_key()
+        locked = throttle.locked_for(key)
+        if locked:
+            logger.warning("登录尝试被限流: %s", key)
+            error = _t("msg_login_locked", seconds=locked)
+        else:
+            ok, message_key = verify_credentials(
+                request.form.get("username"), request.form.get("password")
+            )
+            if ok:
+                throttle.reset(key)
+                login_user(request.form.get("username"))
+                logger.info("登录成功: %s", request.form.get("username"))
+                return redirect(
+                    _local_redirect(request.form.get("next"), url_for("web.index"))
+                )
+            throttle.record_failure(key)
+            logger.warning("登录失败: user=%r from %s", request.form.get("username"), key)
+            error = _t(message_key)
+
+    return render_template(
+        "login.html",
+        **_login_context(error=error, next=request.form.get("next") or request.args.get("next", ""))
+    )
+
+
+@web_bp.route("/logout", methods=["POST"])
+def logout():
+    logout_user()
+    flash(_t("msg_logged_out"))
+    return redirect(url_for("web.login") if auth_enabled() else url_for("web.index"))
+
+
+# --------------------------------------------------------------------------- #
 # 页面
 # --------------------------------------------------------------------------- #
 @web_bp.route("/")
@@ -210,7 +309,9 @@ def healthz():
     except Exception as exc:  # noqa: BLE001 - 健康检查本身不能抛异常
         logger.warning("健康检查失败: %s", exc)
         return "database unavailable", 503, {"Content-Type": "text/plain; charset=utf-8"}
-    return "ok", 200, {"Content-Type": "text/plain; charset=utf-8"}
+    # 带上版本号，便于确认线上跑的是哪一版
+    version = current_app.config.get("APP_VERSION", "")
+    return f"ok {version}".strip(), 200, {"Content-Type": "text/plain; charset=utf-8"}
 
 
 # --------------------------------------------------------------------------- #
@@ -264,12 +365,33 @@ def add_source():
 
     _schedule(source)
 
-    # 失败原因只写日志：原来把异常原文（连接池/DNS 报错）直接显示给用户
-    ok, message = fetch_source(source.id, notify=True)
-    flash(_t("msg_source_added") if ok else _t("msg_source_added_fetch_failed"))
-    if not ok:
-        logger.warning("源 %s 首次抓取失败: %s", source.id, message)
+    if current_app.config.get("FETCH_INITIAL_ASYNC", True):
+        # 首次抓取放后台：全文抽取 + 网络重试最坏能拖住请求几十秒
+        start_background_fetch(source.id)
+        flash(_t("msg_source_added_fetching"))
+        logger.info("源 %s 已添加，首次抓取转入后台", source.id)
+    else:
+        ok, message = fetch_source(source.id, notify=True)
+        flash(_t("msg_source_added") if ok else _t("msg_source_added_fetch_failed"))
+        if not ok:
+            logger.warning("源 %s 首次抓取失败: %s", source.id, message)
     return redirect(url_for("web.index"))
+
+
+def start_background_fetch(source_id):
+    """在后台线程里完成首次抓取（需要自己推应用上下文）。"""
+    app = current_app._get_current_object()
+
+    def worker():
+        with app.app_context():
+            try:
+                fetch_source(source_id, notify=True)
+            except Exception as exc:  # noqa: BLE001 - 后台任务不能把异常抛给请求
+                logger.error("后台首次抓取失败 source=%s: %s", source_id, exc)
+
+    thread = threading.Thread(target=worker, name=f"initial-fetch-{source_id}", daemon=True)
+    thread.start()
+    return thread
 
 
 @web_bp.route("/delete_source/<int:source_id>", methods=["POST"])
@@ -295,6 +417,47 @@ def refresh_source(source_id):
     else:
         flash(_t("msg_refresh_failed"))
         logger.warning("手动刷新源 %s 失败: %s", source.id, message)
+    return redirect(url_for("web.index"))
+
+
+@web_bp.route("/edit_source/<int:source_id>", methods=["POST"])
+def edit_source(source_id):
+    """编辑订阅源：名称、分类、更新间隔（README 与翻译表里一直有 edit，之前没有实现）。"""
+    source = db.get_or_404(Source, source_id)
+    name = (request.form.get("name") or "").strip()
+    category = (request.form.get("category") or "").strip() or "General"
+
+    for label_key, value, limit in (
+        ("name", name, MAX_NAME_CHARS),
+        ("category", category, MAX_CATEGORY_CHARS),
+    ):
+        message = _too_long(label_key, value, limit)
+        if message:
+            flash(message)
+            return redirect(url_for("web.index"))
+
+    source.name = name or source.url
+    source.category = category
+    source.interval = _parse_interval(
+        request.form.get("interval"), source.interval or DEFAULT_INTERVAL_MINUTES
+    )
+    db.session.commit()
+    _schedule(source)  # 间隔变了要重新注册任务
+    flash(_t("msg_source_updated", name=source.name))
+    return redirect(url_for("web.index"))
+
+
+@web_bp.route("/toggle_source/<int:source_id>", methods=["POST"])
+def toggle_source(source_id):
+    """暂停 / 恢复某个源（暂停后不再调度，但保留已抓到的文章）。"""
+    source = db.get_or_404(Source, source_id)
+    source.enabled = not source.enabled
+    db.session.commit()
+    _schedule(source)  # 暂停 → 移除任务；恢复 → 重新注册
+    flash(
+        _t("msg_source_resumed" if source.enabled else "msg_source_paused", name=source.name or source.url)
+    )
+    logger.info("源 %s 已%s", source.id, "恢复" if source.enabled else "暂停")
     return redirect(url_for("web.index"))
 
 
@@ -354,3 +517,9 @@ def import_opml_route():
 def forbidden(error):  # pragma: no cover - 仅提供可读提示
     logger.warning("返回 403: %s", error)
     return "403 Forbidden: cross-site request blocked", 403
+
+
+@web_bp.errorhandler(413)
+def payload_too_large(error):  # pragma: no cover - 仅提供可读提示
+    limit = current_app.config.get("MAX_CONTENT_LENGTH", 0)
+    return f"413 Payload Too Large: request body exceeds {limit} bytes", 413

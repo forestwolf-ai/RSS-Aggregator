@@ -2,6 +2,8 @@
 
 [English](README.md) | [中文](README-zh.md)
 
+**Current version: 2.0.1** &nbsp;·&nbsp; `/healthz` reports it too.
+
 A feature-rich, self-hosted RSS feed aggregator with scheduled fetching, OPML import/export, full-text extraction, search, email notifications, and a bilingual web interface. Ideal for personal or team use in information aggregation, content monitoring, and reading management.
 
 ---
@@ -10,14 +12,16 @@ A feature-rich, self-hosted RSS feed aggregator with scheduled fetching, OPML im
 
 ### Core Features
 
-- **RSS Source Management**: Add, delete, and edit RSS feeds with categories (e.g., "Tech", "News", "Blogs").
-- **Scheduled Fetching**: Powered by APScheduler, each source can have its own update interval (minimum 5 minutes).
-- **Persistent Storage**: Uses SQLite (default) or PostgreSQL via SQLAlchemy.
-- **Web Interface**: Flask-based responsive UI with English/Chinese language switching.
+- **RSS Source Management**: Add, delete, edit and pause RSS feeds with categories (e.g., "Tech", "News", "Blogs").
+- **Scheduled Fetching**: Powered by APScheduler, each source can have its own update interval (minimum 5 minutes); paused sources are skipped.
+- **Login protection**: Single-user sign-in with hashed passwords, session cookies hardened (`HttpOnly`, `SameSite=Lax`) and a lockout after repeated failures. Off by default until you set a password.
+- **Persistent Storage**: Uses SQLite (default) or PostgreSQL via SQLAlchemy, with lightweight in-place migrations for existing databases.
+- **Web Interface**: Flask-based responsive UI with English/Chinese language switching, plus global and per-feed unread counters.
 - **Article Reading**: Displays title, summary, publish time, and links to the original article.
 
 ### Advanced Features
 
+- **Retention policy**: Cap articles per feed or by age so a long-running instance does not grow without bound.
 - **OPML Import/Export**: One-click migration of feed subscriptions, compatible with mainstream RSS readers.
 - **Full-Text Extraction**: For sources that provide only summaries, attempts to extract the full article text using BeautifulSoup.
 - **Keyword Filtering & Full-Text Search**: Search across title, summary, and content, with optional filtering by source and unread status.
@@ -50,11 +54,14 @@ rss_aggregator/
 │   ├── __init__.py          # Application initialization
 │   ├── config.py            # Configuration loader
 │   ├── models.py            # ORM models (Source, Article)
-│   ├── schema.py            # Create tables and backfill indexes
+│   ├── schema.py            # Create tables, backfill columns/indexes for existing databases
+│   ├── version.py           # Single source of truth for the version number
 │   ├── fetcher.py           # RSS fetching with retry logic
 │   ├── scheduler.py         # Background scheduler
 │   ├── urlsafety.py         # SSRF guard for outbound URLs
 │   ├── security.py          # Cross-site request origin check
+│   ├── auth.py              # Single-user login, session and lockout
+│   ├── retention.py         # Article retention (per-feed count / age)
 │   ├── i18n.py              # English/Chinese translations
 │   ├── opml.py              # OPML import/export
 │   ├── fulltext.py          # Full-text extraction
@@ -65,10 +72,12 @@ rss_aggregator/
 │       ├── routes.py        # Routes and views
 │       └── templates/
 │           ├── index.html   # Main page template
+│           └── login.html   # Sign-in page
 ├── tests/
 │   ├── test_bugfixes.py       # Regression tests (30 cases)
 │   ├── test_v13_bugs.py       # v1.3 audit tests (8 cases)
 │   ├── test_v14_bugs.py       # v1.4 audit tests + repository layout checks (7 cases)
+│   ├── test_v2_bugs.py        # v2.0.1 features and fixes (16 cases)
 │   ├── test_e2e_smoke.py      # End-to-end smoke test (starts a real server)
 │   └── test_debug_reloader.py # Verifies the scheduler starts only once under --debug
 ├── main.py                  # Entry point
@@ -82,8 +91,9 @@ rss_aggregator/
 └── README.md                # This file
 ```
 
-> **Security note**: the app has no authentication. Keep it on a trusted network
-> (or behind a reverse proxy that adds auth) instead of exposing it to the internet.
+> **Security note**: since 2.0.1 the app ships with optional single-user authentication.
+> Set `auth.password_hash` (or the `RSS_AGGREGATOR_PASSWORD` environment variable) before
+> exposing it beyond your own network — without a password the UI is open to anyone who can reach it.
 
 ---
 
@@ -147,11 +157,23 @@ server:
   port: 5000
   debug: false
 
+auth:
+  enabled: true                # Ignored (off) until a password is configured
+  username: "admin"
+  # password_hash: "..."       # Generate with: python -m app.auth <password>
+  # password: "plain"          # Convenience only; a hash is recommended
+  session_days: 14
+
+retention:
+  max_articles_per_source: 0   # Keep at most N articles per feed (0 = unlimited)
+  max_age_days: 0              # Keep articles newer than N days (0 = unlimited)
+
 fetch:
   retries: 3                   # Retries for network errors
   timeout: 15                  # Per-request timeout (seconds)
-  max_entries: 50              # Max entries processed per fetch
+  max_entries: 50              # Max NEW articles stored per run (the rest are picked up later)
   max_bytes: 8388608           # Max feed response size in bytes (8 MB); larger is truncated
+  initial_async: true          # Return immediately and fetch the new feed in the background
 
 fulltext:
   enabled: true
@@ -162,6 +184,8 @@ fulltext:
 security:
   allow_private_networks: false  # Keep false to block SSRF to internal addresses
   csrf_origin_check: true        # Reject cross-site POSTs (Origin/Referer check)
+  session_cookie_secure: false   # Set true when serving over HTTPS
+  max_content_bytes: 8388608     # Reject request bodies larger than this (413)
 
 logging:
   level: "INFO"

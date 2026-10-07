@@ -196,9 +196,20 @@ def main():
         )
         check("添加源返回重定向", status in (301, 302), f"status={status}")
 
+        # 源本身是同步入库的，页面上应立刻可见
         status, body = http("GET", "/")
-        check("抓取结果出现在首页", "Smoke Article One" in body, "文章未入库或未渲染")
-        check("首页显示源名称", "Smoke" in body)
+        check("添加源后首页立即显示源名称", "Smoke" in body, "源没有立即出现在列表里")
+
+        # v2.0.1 起首次抓取在后台执行：这里轮询等待结果入库
+        deadline = time.time() + 25
+        fetched = False
+        while time.time() < deadline:
+            status, body = http("GET", "/")
+            if "Smoke Article One" in body:
+                fetched = True
+                break
+            time.sleep(0.5)
+        check("后台首次抓取结果最终入库并渲染", fetched, "25 秒内没有抓到文章")
 
         status, body = http("GET", "/search?q=Article+Two")
         check("搜索命中", status == 200 and "Smoke Article Two" in body, f"status={status}")
