@@ -1,13 +1,3 @@
-"""文章保留策略。
-
-自托管阅读器跑久了数据库会无限膨胀（一个日报源一年就能堆出上万条）。
-这里在每次抓取成功后按源清理，规则来自配置：
-
-* `retention.max_articles_per_source`：每个源最多保留多少条（0 = 不限）；
-* `retention.max_age_days`：只保留最近多少天（0 = 不限）。
-
-两条规则同时生效时取更严格的结果。清理是可选的：都为 0 就完全不删。
-"""
 import logging
 
 from sqlalchemy import func

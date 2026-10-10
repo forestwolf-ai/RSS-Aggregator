@@ -39,7 +39,7 @@ from app.auth import (
 )
 from app.fetcher import fetch_source
 from app.i18n import translate
-from app.models import Article, Source
+from app.models import MAX_SOURCE_URL_CHARS, Article, Source
 from app.opml import export_opml, import_opml
 from app.search import search_articles
 from app.security import check_csrf_origin
@@ -52,7 +52,7 @@ DEFAULT_INTERVAL_MINUTES = 30
 PER_PAGE = 50
 MAX_OPML_BYTES = 5 * 1024 * 1024
 FILTER_KEYS = ("q", "source_id", "unread", "lang")
-MAX_URL_CHARS = 500      # 与 Source.url 的列宽一致
+MAX_URL_CHARS = MAX_SOURCE_URL_CHARS
 MAX_NAME_CHARS = 200     # 与 Source.name 的列宽一致
 MAX_CATEGORY_CHARS = 100  # 与 Source.category 的列宽一致
 _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")

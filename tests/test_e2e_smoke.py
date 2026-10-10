@@ -170,7 +170,8 @@ def main():
     app_server = subprocess.Popen(
         [PYTHON, os.path.join(REPO, "main.py")], cwd=workdir,
         env={**env, "PYTHONPATH": REPO},
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8",
+        errors="replace", bufsize=1,
     )
     collector = OutputCollector(app_server.stdout)
     collector.start()

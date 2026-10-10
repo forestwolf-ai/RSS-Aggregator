@@ -8,6 +8,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2.0.2] - 2026-10-10
+
+维护版本：修复 OPML 导入时超长订阅地址被静默截断的问题，并完善打包与 Windows 测试兼容性。
+Maintenance release: fix silently truncated oversized feed URLs during OPML import, and improve packaging and Windows test compatibility.
+
+### 修复 / Fixed
+
+- **OPML 超长订阅地址被截断**：导入时现在会拒绝超过数据库字段上限的 URL，并将该条计为失败，避免截断后保存错误地址；Web 表单和 ORM 也共用同一长度限制。
+- **Oversized OPML feed URLs were truncated**: imports now reject URLs exceeding the database column limit and count them as failures, instead of saving a truncated, incorrect address. The web form and ORM share the same limit.
+
+### 打包与测试 / Packaging and tests
+
+- 补齐 Docker 构建忽略规则及运行时文件的 Git 忽略规则，并移除重复的 `app/.dockerfile`。
+- Restore Docker build exclusions and Git ignore rules for runtime files, and remove the duplicate `app/.dockerfile`.
+- Windows 下的端到端与调试重载器测试显式按 UTF-8 读取日志，避免系统默认编码导致解码异常。
+- End-to-end and debug-reloader tests now read logs as UTF-8 on Windows, avoiding decoding errors from the system default encoding.
+
+### 验证 / Verification
+
+- 缺陷回归测试：30/30、16/16、8/8、8/8 通过；端到端冒烟测试与调试重载器检查通过。
+- Bug regression suites: 30/30, 16/16, 8/8, and 8/8 passed; end-to-end smoke and debug-reloader checks passed.
+
+---
+
 ## [2.0.1] - 2026-10-07
 
 第四轮审查 + 功能版本：修复 **5 项缺陷**、新增 **5 项功能**，并把版本号收敛到单一来源。

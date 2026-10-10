@@ -58,7 +58,8 @@ proc = subprocess.Popen(
     [PYTHON, "-m", "flask", "--app", "main", "run", "--debug",
      "--host", "127.0.0.1", "--port", str(PORT)],
     cwd=workdir, env=env,
-    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
+    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8",
+    errors="replace", bufsize=1,
 )
 
 output = []

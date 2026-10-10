@@ -1,7 +1,3 @@
-"""v2.0.1：新增功能与第四轮审查缺陷的验证用例。
-
-用法：python tests/test_v2_bugs.py
-"""
 import os
 import sys
 import threading
