@@ -1,16 +1,3 @@
-"""Web 路由。
-
-修复要点：
-1. 蓝图必须声明 template_folder='templates'。模板在 app/web/templates/，
-   而 Flask(__name__) 只会去 app/templates/ 找，原来每个页面都
-   TemplateNotFound → 整站 500。
-2. 分页链接保留当前查询条件（原来用 request.view_args，把 q / lang / source_id /
-   unread 全丢了，搜索翻到第二页就变成全量列表）。
-3. 会改状态的操作用 POST（原来是 GET：浏览器预取、<img> 标签、爬虫都能删库）。
-4. interval 容错解析并强制 ≥ 5 分钟（原来非数字直接 500，0/负数会注册非法任务）。
-5. 重复 URL 友好提示而不是 IntegrityError 500；新增/导入的源立即注册调度任务。
-6. 补上「标记已读」入口，让 unread 过滤形成闭环（原来 read 永远是 False）。
-"""
 import logging
 import re
 import threading

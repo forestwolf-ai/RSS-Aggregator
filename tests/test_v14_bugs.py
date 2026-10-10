@@ -1,8 +1,3 @@
-"""v1.4 第三轮审查：新增缺陷的验证用例。
-
-同一份用例在修复前失败、修复后通过。
-用法：python tests/test_v14_bugs.py
-"""
 import os
 import sys
 import traceback

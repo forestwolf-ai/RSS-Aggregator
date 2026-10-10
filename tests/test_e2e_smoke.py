@@ -1,11 +1,3 @@
-"""端到端冒烟测试。
-
-与单元级回归测试互补：这里真的启动 `python main.py`（走 main.py 的引导流程），
-用真实 HTTP 请求驱动，并用一个本地 HTTP 服务提供真实 RSS 源，
-验证「添加源 → 抓取入库 → 页面渲染 → 搜索 → OPML 导出/导入 → 健康检查」整条链路。
-
-用法：python tests/test_e2e_smoke.py
-"""
 import os
 import subprocess
 import sys
